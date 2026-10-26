@@ -1,7 +1,7 @@
 """
 Module A helper — populate SENTINEL schema with synthetic data.
 
-Run after db/schema.sql has been applied:
+Run after sql/schema.sql has been applied:
     python scripts/seed_data.py
 
 Uses the ADMIN connection (pyexasol), same credentials as the engine's write
@@ -73,7 +73,7 @@ def seed_lineage(conn):
 def seed_pipeline_logs(conn, n=40):
     conn.execute("DELETE FROM PIPELINE_LOGS")
     now = datetime.utcnow()
-    for i in range(n):
+    for _ in range(n):
         pipeline_id, source, target = random.choice(PIPELINES)
         ts = now - timedelta(minutes=random.randint(0, 60 * 24))
         failed = random.random() < 0.15
@@ -103,7 +103,7 @@ def seed_query_metrics(conn, n=80):
     conn.execute("DELETE FROM QUERY_METRICS")
     now = datetime.utcnow()
     tables = ["sales_clean", "inventory_clean", "marketing_attribution", "finance_executive_bi"]
-    for i in range(n):
+    for _ in range(n):
         ts = now - timedelta(minutes=random.randint(0, 60 * 24))
         expensive = random.random() < 0.1
         compute_ms = random.uniform(5000, 60000) if expensive else random.uniform(50, 4000)

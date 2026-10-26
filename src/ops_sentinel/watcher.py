@@ -23,11 +23,11 @@ import asyncio
 import logging
 from datetime import datetime
 
-from engine.config import settings
-from engine.db import get_connection
-from engine.mcp_client import get_error_context, get_lineage_for_table
-from engine.slack_notifier import post_incident_card
-from engine.triage_agent import triage
+from ops_sentinel.config import settings
+from ops_sentinel.db import get_connection
+from ops_sentinel.mcp_client import get_error_context, get_lineage_for_table
+from ops_sentinel.slack_notifier import post_incident_card
+from ops_sentinel.triage_agent import triage
 
 logger = logging.getLogger("ops_sentinel.watcher")
 

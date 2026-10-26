@@ -4,7 +4,7 @@ impact narrative and a suggested fix, via whichever LLM provider is configured.
 """
 import json
 
-from engine.config import settings
+from ops_sentinel.config import settings
 
 SYSTEM_PROMPT = """You are Ops Sentinel's triage agent for a data platform.
 You will be given a pipeline failure's error stack and its downstream data

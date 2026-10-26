@@ -21,7 +21,7 @@ from contextlib import contextmanager
 
 import pyexasol
 
-from engine.config import settings
+from ops_sentinel.config import settings
 
 
 class ExasolConnectionPool:
@@ -34,7 +34,7 @@ class ExasolConnectionPool:
 
     def __init__(self, max_size: int):
         self._max_size = max_size
-        self._idle: "queue.Queue[pyexasol.ExaConnection]" = queue.Queue()
+        self._idle: queue.Queue[pyexasol.ExaConnection] = queue.Queue()
         self._created = 0
         self._lock = threading.Lock()
 

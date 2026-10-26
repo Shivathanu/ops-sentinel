@@ -1,7 +1,7 @@
 """Builds and sends the Slack Block Kit Approve/Reject card (Module C, chat half)."""
 from slack_sdk import WebClient
 
-from engine.config import settings
+from ops_sentinel.config import settings
 
 client = WebClient(token=settings.slack_bot_token)
 

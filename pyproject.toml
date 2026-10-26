@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ops-sentinel"
+dynamic = ["version"]
+description = "Cost-aware ops manager: detects pipeline failures and query-cost spikes in Exasol, investigates over MCP, and remediates only after human approval."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Shiva" }]
+keywords = ["exasol", "mcp", "dataops", "incident-response", "ai-agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Framework :: FastAPI",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "fastapi==0.115.*",
+    "uvicorn[standard]==0.32.*",
+    "pydantic-settings==2.6.*",
+    "httpx==0.27.*",
+    "pyexasol==0.27.*",
+    "mcp==1.*",
+    "slack_sdk==3.33.*",
+    "python-dotenv==1.0.*",
+    "openai==1.*",
+    "anthropic<1",
+]
+
+[project.optional-dependencies]
+dashboard = [
+    "streamlit==1.39.*",
+    "pandas==2.2.*",
+]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "ops_sentinel.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ops_sentinel = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+xfail_strict = true
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+# Long SQL and prompt string literals are kept readable as written rather than wrapped.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts configure stdout and load .env before importing the package.
+"scripts/*" = ["E402"]

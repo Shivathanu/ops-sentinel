@@ -23,11 +23,11 @@ import urllib.parse
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from slack_sdk.signature import SignatureVerifier
 
-from engine.config import settings
-from engine.remediation import execute_remediation, reject_incident
-from engine.scoring import compute_efficiency_score, compute_trust_score, recent_incidents
-from engine.slack_notifier import update_incident_card
-from engine.watcher import watch_loop
+from ops_sentinel.config import settings
+from ops_sentinel.remediation import execute_remediation, reject_incident
+from ops_sentinel.scoring import compute_efficiency_score, compute_trust_score, recent_incidents
+from ops_sentinel.slack_notifier import update_incident_card
+from ops_sentinel.watcher import watch_loop
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ops_sentinel.main")

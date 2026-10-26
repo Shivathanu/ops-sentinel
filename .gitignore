@@ -1,4 +1,28 @@
+# secrets and local config
 .env
-.venv/
+.env.*
+!.env.example
+
+# python
 __pycache__/
-*.pyc
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# runtime output
+*.log
+
+# editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

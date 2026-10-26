@@ -1,10 +1,10 @@
 """
 Proves the real MCP read path end to end: spawns the actual
 `exasol-mcp-server` the same way exakit configures it for Claude/Codex/
-Cursor, over stdio, and calls engine.mcp_client's real functions against the
+Cursor, over stdio, and calls ops_sentinel.mcp_client's real functions against the
 live local Exasol database.
 
-Run: .venv\\Scripts\\python.exe scripts\\test_mcp_read.py
+Run: .venv\\Scripts\\python.exe scripts\\check_mcp_read.py
 """
 import asyncio
 
@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from engine.mcp_client import get_error_context, get_lineage_for_table, mcp_session  # noqa: E402
+from ops_sentinel.mcp_client import get_error_context, get_lineage_for_table, mcp_session  # noqa: E402
 
 
 async def main() -> None:
@@ -27,7 +27,7 @@ async def main() -> None:
     # Find the latest injected failure directly to pass its LOG_ID in — the
     # watcher normally does this scan step itself; here we just need a
     # known-good id to prove the MCP read call works.
-    from engine.db import get_connection
+    from ops_sentinel.db import get_connection
 
     with get_connection() as conn:
         row = conn.execute(
@@ -41,10 +41,10 @@ async def main() -> None:
     print(f"  (found via admin connection, for test setup only: LOG_ID={log_id})")
 
     error_context = await get_error_context(pipeline_id, log_id)
-    print(f"\nengine.mcp_client.get_error_context(...) -> {error_context}")
+    print(f"\nops_sentinel.mcp_client.get_error_context(...) -> {error_context}")
 
     lineage = await get_lineage_for_table(target_table)
-    print(f"\nengine.mcp_client.get_lineage_for_table('{target_table}') -> {lineage}")
+    print(f"\nops_sentinel.mcp_client.get_lineage_for_table('{target_table}') -> {lineage}")
 
     print("\nThis was a real MCP round trip over the read-only mcp_readonly login.")
 

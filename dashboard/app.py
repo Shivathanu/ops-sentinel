@@ -28,7 +28,7 @@ try:
     col1.metric("Platform Trust Score", f"{trust}%")
     col2.metric("Cloud Efficiency Rating", f"{efficiency}%")
 except httpx.HTTPError:
-    st.error("Could not reach the Ops Sentinel engine. Is `uvicorn engine.main:app` running?")
+    st.error("Could not reach the Ops Sentinel engine. Is `uvicorn ops_sentinel.main:app` running?")
     st.stop()
 
 st.subheader("Recent Incidents")

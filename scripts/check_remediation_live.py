@@ -1,17 +1,17 @@
 """
 Proves the real remediation write path end to end against the live Exasol
 database: the atomic AWAITING_APPROVAL claim, the safety guardrail, and the
-actual SQL execution + audit trail — all via engine/remediation.py's real
+actual SQL execution + audit trail — all via ops_sentinel/remediation.py's real
 functions, no simulation.
 
-Run: .venv\\Scripts\\python.exe scripts\\test_remediation_live.py
+Run: .venv\\Scripts\\python.exe scripts\\check_remediation_live.py
 """
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from engine.db import get_connection  # noqa: E402
-from engine.remediation import execute_remediation, reject_incident  # noqa: E402
+from ops_sentinel.db import get_connection  # noqa: E402
+from ops_sentinel.remediation import execute_remediation  # noqa: E402
 
 GOOD_INCIDENT_ID = 7   # corresponds to the real sales_clean / finance_executive_bi failure
 BAD_INCIDENT_ID = 6    # a different real incident, used only to prove the guardrail rejects unsafe SQL

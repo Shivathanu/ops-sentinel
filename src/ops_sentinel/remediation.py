@@ -1,6 +1,6 @@
 """
 The ONLY module that writes to Exasol, and only after a Slack approval. Uses
-the pooled admin connection from engine/db.py, never MCP — the MCP login is
+the pooled admin connection from ops_sentinel/db.py, never MCP — the MCP login is
 read-only by design and that boundary should stay real, not just conventional.
 
 CRITICAL FIX: the previous version ran `SUGGESTED_FIX_SQL` from the LLM
@@ -31,7 +31,7 @@ conversion (`{x!d}` -> `1`, unquoted) to match their actual column type.
 """
 from datetime import datetime
 
-from engine.db import get_connection
+from ops_sentinel.db import get_connection
 
 # Conservative allow-list: only these leading verbs are eligible for
 # automated remediation at all. SELECT is included so a "re-run a query to

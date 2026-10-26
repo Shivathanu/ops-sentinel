@@ -7,26 +7,26 @@ What's REAL vs. SIMULATED in this run, and why:
 
   Database (Exasol)        SIMULATED -> an in-memory SQLite DB stands in,
                             with the same tables and the same detection
-                            query shape as engine/watcher.py, because Exasol
+                            query shape as ops_sentinel/watcher.py, because Exasol
                             Personal isn't installed in this environment yet.
 
-  MCP read path             SIMULATED -> prints what engine/mcp_client.py
+  MCP read path             SIMULATED -> prints what ops_sentinel/mcp_client.py
                             would ask for and reads it straight from SQLite,
                             because the real `exasol` MCP server needs
                             `exakit` installed and running.
 
   LLM triage                 REAL if OPENAI_API_KEY or ANTHROPIC_API_KEY is
-                            set in .env (calls engine.triage_agent.triage()
+                            set in .env (calls ops_sentinel.triage_agent.triage()
                             for real); otherwise a clearly labeled canned
                             response so the flow still completes.
 
   Slack notification         REAL if SLACK_BOT_TOKEN + SLACK_CHANNEL_ID are
-                            set in .env (calls engine.slack_notifier for
+                            set in .env (calls ops_sentinel.slack_notifier for
                             real, posts an actual message); otherwise the
                             Block Kit card is rendered as text here instead.
 
   Remediation guardrail       REAL, always -> imports _validate_fix_sql
-                            straight from engine/remediation.py, so this run
+                            straight from ops_sentinel/remediation.py, so this run
                             proves the safety fix actually blocks unsafe SQL,
                             not a reimplementation of it.
 
@@ -44,8 +44,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from engine.config import settings  # noqa: E402
-from engine.remediation import _validate_fix_sql  # noqa: E402 — the real guardrail, reused as-is
+from ops_sentinel.config import settings  # noqa: E402
+from ops_sentinel.remediation import _validate_fix_sql  # noqa: E402 — the real guardrail, reused as-is
 
 SEP = "-" * 78
 
@@ -140,8 +140,8 @@ def step_4_triage(error_context: dict, lineage: list[dict]) -> dict:
     banner("STEP 4", "Triage: LLM generates business impact + a suggested fix")
     has_llm_key = bool(settings.openai_api_key or settings.anthropic_api_key)
     if has_llm_key:
-        print("  LLM key found in .env -> calling the REAL engine.triage_agent.triage()")
-        from engine.triage_agent import triage
+        print("  LLM key found in .env -> calling the REAL ops_sentinel.triage_agent.triage()")
+        from ops_sentinel.triage_agent import triage
         result = triage(error_context, lineage)
         print("  (the above was a real LLM API call)")
     else:
@@ -165,7 +165,7 @@ def step_5a_notify(incident_id: int, triage_result: dict) -> None:
     has_slack = bool(settings.slack_bot_token and settings.slack_channel_id)
     if has_slack:
         print("  Slack credentials found in .env -> posting a REAL card")
-        from engine.slack_notifier import post_incident_card
+        from ops_sentinel.slack_notifier import post_incident_card
         post_incident_card(
             incident_id=incident_id,
             source_type="PIPELINE_FAILURE",
@@ -199,7 +199,7 @@ def step_5b_safety_check(bad_examples: list[str]) -> None:
 def step_5c_approve(conn: sqlite3.Connection, incident_id: int, fix_sql: str, approved_by: str = "demo.user") -> None:
     banner("STEP 5 (part 2)", "Engineer clicks Approve -> real validation, then remediate")
     is_safe, detail = _validate_fix_sql(fix_sql)
-    print(f"  engine.remediation._validate_fix_sql(...) -> safe={is_safe}, detail={detail!r}")
+    print(f"  ops_sentinel.remediation._validate_fix_sql(...) -> safe={is_safe}, detail={detail!r}")
 
     if not is_safe:
         conn.execute("UPDATE INCIDENTS SET STATUS = 'FAILED' WHERE INCIDENT_ID = ?", (incident_id,))
@@ -213,7 +213,7 @@ def step_5c_approve(conn: sqlite3.Connection, incident_id: int, fix_sql: str, ap
 
     safe_sql = detail
     before = conn.execute("SELECT COUNT(*) AS n FROM sales_clean WHERE region_code IS NULL").fetchone()["n"]
-    conn.execute(safe_sql)  # the SQLite stand-in for engine/remediation.py's Exasol admin write path
+    conn.execute(safe_sql)  # the SQLite stand-in for ops_sentinel/remediation.py's Exasol admin write path
     after = conn.execute("SELECT COUNT(*) AS n FROM sales_clean WHERE region_code IS NULL").fetchone()["n"]
     print(f"  sales_clean rows with NULL region_code: {before} -> {after}")
     conn.execute(
@@ -239,7 +239,7 @@ def step_6_refresh(conn: sqlite3.Connection, incident_id: int) -> None:
     total = conn.execute("SELECT COUNT(*) AS n FROM PIPELINE_LOGS").fetchone()["n"]
     failed = conn.execute("SELECT COUNT(*) AS n FROM PIPELINE_LOGS WHERE STATUS = 'FAILED'").fetchone()["n"]
     trust_score = round((total - failed) / total * 100, 1) if total else 100.0
-    print(f"  Platform Trust Score (same formula as engine.scoring.compute_trust_score): {trust_score}%")
+    print(f"  Platform Trust Score (same formula as ops_sentinel.scoring.compute_trust_score): {trust_score}%")
 
     print("  Remediation audit trail (REMEDIATION_ACTIONS):")
     for action in conn.execute("SELECT OUTCOME, COUNT(*) AS n FROM REMEDIATION_ACTIONS GROUP BY OUTCOME"):
@@ -290,7 +290,7 @@ def main() -> None:
     step_5c_approve(conn, incident_id, triage_result["suggested_fix_sql"])
     step_6_refresh(conn, incident_id)
 
-    print(f"\n{SEP}\nDone. The safety guardrail above is the real engine/remediation.py code, not a reimplementation.\n{SEP}")
+    print(f"\n{SEP}\nDone. The safety guardrail above is the real ops_sentinel/remediation.py code, not a reimplementation.\n{SEP}")
 
 
 if __name__ == "__main__":

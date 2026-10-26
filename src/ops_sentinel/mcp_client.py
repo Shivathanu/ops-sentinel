@@ -6,7 +6,7 @@ the dedicated read-only MCP login, so a bug here can never corrupt data —
 the database enforces that, not this code.
 
 This module intentionally does NOT expose a way to run DDL/DML. Remediation
-writes go through engine/db.py + engine/remediation.py instead, using a
+writes go through ops_sentinel/db.py + ops_sentinel/remediation.py instead, using a
 separate admin connection, after a human approves in Slack.
 """
 import json
@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from engine.config import settings
+from ops_sentinel.config import settings
 
 
 @asynccontextmanager

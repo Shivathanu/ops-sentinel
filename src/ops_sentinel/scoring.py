@@ -2,7 +2,7 @@
 read connection — fine here since it's just aggregation for the dashboard,
 not incident investigation, which stays on the MCP path).
 
-Uses the pooled connection from engine/db.py: these functions are hit on
+Uses the pooled connection from ops_sentinel/db.py: these functions are hit on
 every dashboard refresh, so this is exactly the kind of call site the
 connection-per-call bug used to hurt most.
 
@@ -12,8 +12,8 @@ every value as a string (`{x}` -> `'5'`), which Exasol rejects in numeric
 contexts like `LIMIT` or a `DECIMAL` comparison. Numeric placeholders below
 use the `!d` conversion (`{x!d}` -> `5`, unquoted) instead.
 """
-from engine.config import settings
-from engine.db import get_connection
+from ops_sentinel.config import settings
+from ops_sentinel.db import get_connection
 
 
 def compute_trust_score() -> float:
@@ -56,4 +56,4 @@ def recent_incidents(limit: int = 20) -> list[dict]:
             {"limit": limit},
         ).fetchall()
     cols = ["incident_id", "source_type", "status", "business_impact", "risk_level", "created_ts"]
-    return [dict(zip(cols, r)) for r in rows]
+    return [dict(zip(cols, r, strict=True)) for r in rows]
