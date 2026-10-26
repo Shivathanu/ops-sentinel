@@ -25,8 +25,8 @@ What's REAL vs. SIMULATED in this run, and why:
                             real, posts an actual message); otherwise the
                             Block Kit card is rendered as text here instead.
 
-  Remediation guardrail       REAL, always -> imports _validate_fix_sql
-                            straight from ops_sentinel/remediation.py, so this run
+  Remediation guardrail       REAL, always -> imports validate_fix_sql
+                            straight from ops_sentinel/guardrail.py, so this run
                             proves the safety fix actually blocks unsafe SQL,
                             not a reimplementation of it.
 
@@ -45,7 +45,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from ops_sentinel.config import settings  # noqa: E402
-from ops_sentinel.remediation import _validate_fix_sql  # noqa: E402 — the real guardrail, reused as-is
+from ops_sentinel.guardrail import validate_fix_sql  # noqa: E402 — the real guardrail, reused as-is
 
 SEP = "-" * 78
 
@@ -191,27 +191,27 @@ def step_5a_notify(incident_id: int, triage_result: dict) -> None:
 def step_5b_safety_check(bad_examples: list[str]) -> None:
     banner("STEP 5 (safety check)", "What if the LLM had suggested something dangerous? (real guardrail, real calls)")
     for bad_sql in bad_examples:
-        is_safe, detail = _validate_fix_sql(bad_sql)
+        verdict = validate_fix_sql(bad_sql)
         print(f"  '{bad_sql}'")
-        print(f"      -> safe={is_safe}  reason={detail}")
+        print(f"      -> safe={verdict.allowed}  reason={verdict.reason}")
 
 
 def step_5c_approve(conn: sqlite3.Connection, incident_id: int, fix_sql: str, approved_by: str = "demo.user") -> None:
     banner("STEP 5 (part 2)", "Engineer clicks Approve -> real validation, then remediate")
-    is_safe, detail = _validate_fix_sql(fix_sql)
-    print(f"  ops_sentinel.remediation._validate_fix_sql(...) -> safe={is_safe}, detail={detail!r}")
+    verdict = validate_fix_sql(fix_sql)
+    print(f"  ops_sentinel.guardrail.validate_fix_sql(...) -> safe={verdict.allowed}, detail={verdict.statement or verdict.reason!r}")
 
-    if not is_safe:
+    if not verdict.allowed:
         conn.execute("UPDATE INCIDENTS SET STATUS = 'FAILED' WHERE INCIDENT_ID = ?", (incident_id,))
         conn.execute(
             "INSERT INTO REMEDIATION_ACTIONS (INCIDENT_ID, EXECUTED_SQL, EXECUTED_BY, EXECUTED_TS, OUTCOME, OUTCOME_DETAIL) "
             "VALUES (?, ?, ?, ?, 'BLOCKED', ?)",
-            (incident_id, fix_sql, approved_by, datetime.now(timezone.utc).isoformat(), detail),
+            (incident_id, fix_sql, approved_by, datetime.now(timezone.utc).isoformat(), verdict.reason),
         )
         conn.commit()
         return
 
-    safe_sql = detail
+    safe_sql = verdict.statement
     before = conn.execute("SELECT COUNT(*) AS n FROM sales_clean WHERE region_code IS NULL").fetchone()["n"]
     conn.execute(safe_sql)  # the SQLite stand-in for ops_sentinel/remediation.py's Exasol admin write path
     after = conn.execute("SELECT COUNT(*) AS n FROM sales_clean WHERE region_code IS NULL").fetchone()["n"]
@@ -290,7 +290,7 @@ def main() -> None:
     step_5c_approve(conn, incident_id, triage_result["suggested_fix_sql"])
     step_6_refresh(conn, incident_id)
 
-    print(f"\n{SEP}\nDone. The safety guardrail above is the real ops_sentinel/remediation.py code, not a reimplementation.\n{SEP}")
+    print(f"\n{SEP}\nDone. The safety guardrail above is the real ops_sentinel/guardrail.py code, not a reimplementation.\n{SEP}")
 
 
 if __name__ == "__main__":

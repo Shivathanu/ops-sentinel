@@ -100,17 +100,30 @@ pytest
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
 
+## Security model
+
+Model-suggested SQL is untrusted, so four independent controls sit between it and the database:
+
+1. **Guardrail** (`guardrail.py`): one statement, an allow-listed verb, no comments, no DDL, permission or
+   external-I/O keywords, no Sentinel or system tables, a real `WHERE` on `UPDATE` and `DELETE`, and a target
+   table that belongs to the incident (or is one lineage hop away).
+2. **Human approval**: only Slack user IDs in `SLACK_APPROVER_IDS` can approve, the request signature is
+   verified, and an atomic claim means a double click runs the fix once.
+3. **Least-privilege executor**: approved SQL runs as `sentinel_executor`, which has no grants on Sentinel's own
+   tables, so even a guardrail bug cannot edit incidents or the audit trail (`sql/roles.sql`).
+4. **Audit trail**: every outcome, including blocked statements, is written to `REMEDIATION_ACTIONS`.
+
+The HTTP API requires `X-API-Key` (`OPS_SENTINEL_API_KEY`), and Exasol TLS certificates are validated by default.
+Every one of these fails closed: a missing key, approver list or executor credential refuses the request instead
+of falling back to something weaker.
+
 ## Known limitations
 
-Tracked as strict expected-failure tests, so they cannot be forgotten:
-
-- `/api/*` endpoints have no authentication.
-- The guardrail counts a `WHERE` inside an SQL comment as a scope, so a commented-out `WHERE` passes the
-  unscoped `UPDATE` and `DELETE` check.
-
-Also open: remediation connects with the Exasol admin account (`sys`) instead of a least-privilege user,
-certificate validation to Exasol is disabled for the local starter kit, and the watcher must run as a
-single process.
+- `sql/roles.sql` is provided but not applied automatically; until you run it and set the engine and executor
+  users, the app refuses to start database work.
+- The watcher must run as a single process; two workers could both pick up the same failure.
+- `scripts/` helpers still connect with certificate validation off and are for local demos only.
+- The guardrail is a deny-by-default filter, not a SQL parser. Widen it only with a test that pins the pattern.
 
 ## License
 

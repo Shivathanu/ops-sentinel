@@ -76,12 +76,18 @@ async def get_error_context(pipeline_id: str, log_id: int) -> dict:
 
 async def get_lineage_for_table(table_name: str) -> list[dict]:
     """Trace downstream impact so the LLM can describe business impact."""
+    literal = _sql_string_literal(table_name)
     sql = (
         "SELECT SOURCE_TABLE, TARGET_TABLE, DOWNSTREAM_DASHBOARD, OWNER_TEAM, CRITICALITY "
-        f"FROM SENTINEL.DATA_LINEAGE WHERE SOURCE_TABLE = '{table_name}' "
-        f"OR TARGET_TABLE = '{table_name}'"
+        f"FROM SENTINEL.DATA_LINEAGE WHERE SOURCE_TABLE = {literal} OR TARGET_TABLE = {literal}"
     )
     return await run_readonly_sql(sql)
+
+
+def _sql_string_literal(value: str) -> str:
+    """Quotes a value as a SQL string literal. Table names come from pipeline-controlled rows, so they are
+    untrusted even though this path is read-only."""
+    return "'" + value.replace("'", "''") + "'"
 
 
 def _find_sql_tool_name(tools) -> str:

@@ -1,117 +1,153 @@
 """
 FastAPI entrypoint. Three responsibilities live here:
-  1. Start the background watcher loop on boot (step 1-4 of the architecture).
-  2. Receive + verify Slack's interactivity callback and act on it (step 5).
-  3. Serve the small REST API the Streamlit dashboard polls (step 6).
+  1. Start the background watcher loop on boot (steps 1-4 of the architecture).
+  2. Receive, verify and authorize Slack's interactivity callback and act on it (step 5).
+  3. Serve the small REST API the Streamlit dashboard polls (step 6), behind an API key.
 
-CRITICAL FIX: the GET endpoints used to call synchronous Exasol-backed
-functions directly inside `async def` handlers, blocking the whole event
-loop on every dashboard refresh. They're now offloaded with
-`asyncio.to_thread`. The Slack endpoint had a second, related problem:
-Slack requires an HTTP response within 3 seconds or it treats the
-interaction as failed and retries the same payload — but `execute_remediation`
-can take a while (an LLM call isn't involved here, but a slow Exasol write
-could still blow the window). It now acks immediately and does the actual
-remediation via `BackgroundTasks`, which also offloads the sync call to a
-worker thread for free.
+Blocking Exasol calls are offloaded with `asyncio.to_thread` so the event loop keeps serving requests.
+Slack requires an HTTP response within 3 seconds and retries otherwise, so the slow remediation runs in a
+background task after the interaction is acknowledged; the atomic claim in remediation.py makes a retried
+delivery harmless.
 """
 import asyncio
+import contextlib
 import json
 import logging
 import urllib.parse
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from slack_sdk.signature import SignatureVerifier
 
 from ops_sentinel.config import settings
 from ops_sentinel.remediation import execute_remediation, reject_incident
 from ops_sentinel.scoring import compute_efficiency_score, compute_trust_score, recent_incidents
+from ops_sentinel.security import require_api_key, startup_warnings
 from ops_sentinel.slack_notifier import update_incident_card
 from ops_sentinel.watcher import watch_loop
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ops_sentinel.main")
 
-app = FastAPI(title="Ops Sentinel Engine")
+APPROVE_ACTION = "approve_incident"
+REJECT_ACTION = "reject_incident"
 
-# Slack isn't required for the detect/triage/investigate part of the loop to
-# run — only for the approval step. Don't crash the whole engine just
-# because Slack hasn't been configured yet; disable that one endpoint
-# instead and say so clearly in the logs.
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    for warning in startup_warnings():
+        logger.warning(warning)
+    # Keep a reference: the event loop only holds weak references to tasks, so an unreferenced watcher can be
+    # garbage-collected mid-run.
+    watcher = asyncio.create_task(watch_loop())
+    try:
+        yield
+    finally:
+        watcher.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watcher
+
+
+app = FastAPI(title="Ops Sentinel Engine", lifespan=lifespan)
+
+# Slack isn't required for the detect/investigate part of the loop, only for the approval step. Disable that
+# one endpoint instead of crashing the engine when Slack hasn't been configured yet.
 verifier = SignatureVerifier(settings.slack_signing_secret) if settings.slack_signing_secret else None
-if verifier is None:
-    logging.getLogger("ops_sentinel.main").warning(
-        "SLACK_SIGNING_SECRET not set — /slack/interactions will reject all requests "
-        "until Slack is configured. Detection and MCP investigation still run normally."
-    )
 
 
-@app.on_event("startup")
-async def start_watcher():
-    asyncio.create_task(watch_loop())
+@dataclass(frozen=True)
+class SlackAction:
+    action_id: str
+    incident_id: int
+    user_id: str
+    username: str
+    message_ts: str
+
+    @property
+    def actor(self) -> str:
+        """Identity recorded in the audit trail; the ID is stable even if the username changes."""
+        return f"{self.username} ({self.user_id})"
 
 
 @app.get("/health")
-async def health():
+async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/trust-score")
-async def trust_score():
+@app.get("/api/trust-score", dependencies=[Depends(require_api_key)])
+async def trust_score() -> dict[str, float]:
     return {"trust_score": await asyncio.to_thread(compute_trust_score)}
 
 
-@app.get("/api/efficiency-score")
-async def efficiency_score():
+@app.get("/api/efficiency-score", dependencies=[Depends(require_api_key)])
+async def efficiency_score() -> dict[str, float]:
     return {"efficiency_score": await asyncio.to_thread(compute_efficiency_score)}
 
 
-@app.get("/api/incidents")
-async def incidents():
+@app.get("/api/incidents", dependencies=[Depends(require_api_key)])
+async def incidents() -> dict[str, list[dict]]:
     return {"incidents": await asyncio.to_thread(recent_incidents)}
 
 
 @app.post("/slack/interactions")
-async def slack_interactions(request: Request, background_tasks: BackgroundTasks):
+async def slack_interactions(request: Request, background_tasks: BackgroundTasks) -> dict[str, bool]:
     if verifier is None:
         raise HTTPException(status_code=503, detail="Slack is not configured on this engine (SLACK_SIGNING_SECRET unset)")
     body = await request.body()
     if not verifier.is_valid_request(body, dict(request.headers)):
         raise HTTPException(status_code=401, detail="invalid Slack signature")
 
-    form = urllib.parse.parse_qs(body.decode())
-    payload = json.loads(form["payload"][0])
+    action = _parse_slack_action(body)
+    if action.user_id not in settings.approver_ids():
+        logger.warning(
+            "refusing %s on incident #%s from %s: not in SLACK_APPROVER_IDS", action.action_id, action.incident_id, action.actor
+        )
+        raise HTTPException(status_code=403, detail="you are not an authorized approver")
 
-    action = payload["actions"][0]
-    action_id = action["action_id"]
-    incident_id = int(action["value"])
-    user = payload["user"]["username"]
-    message_ts = payload["message"]["ts"]
-
-    # Ack Slack within its 3-second window immediately; do the actual work
-    # (a sync Exasol write) in the background. BackgroundTasks runs sync
-    # callables in a worker thread automatically, so this also keeps the
-    # event loop free without an explicit asyncio.to_thread here.
-    if action_id == "approve_incident":
-        background_tasks.add_task(_process_approval, incident_id, user, message_ts)
-    elif action_id == "reject_incident":
-        background_tasks.add_task(_process_rejection, incident_id, user, message_ts)
-
+    if action.action_id == APPROVE_ACTION:
+        background_tasks.add_task(_process_approval, action)
+    elif action.action_id == REJECT_ACTION:
+        background_tasks.add_task(_process_rejection, action)
+    else:
+        logger.warning("unknown Slack action_id %r from %s", action.action_id, action.actor)
+        raise HTTPException(status_code=400, detail="unknown action")
     return {"ok": True}
 
 
-def _process_approval(incident_id: int, user: str, message_ts: str) -> None:
+def _parse_slack_action(body: bytes) -> SlackAction:
     try:
-        success, detail = execute_remediation(incident_id, approved_by=user)
-        icon = "\u2705" if success else "\u26a0\ufe0f"
-        update_incident_card(message_ts, f"{icon} Incident #{incident_id} — {detail} (approved by @{user})")
-    except Exception:  # noqa: BLE001 — this runs off-request, so log instead of raising into nowhere
-        logger.exception("approval processing failed for incident #%s", incident_id)
+        form = urllib.parse.parse_qs(body.decode())
+        payload = json.loads(form["payload"][0])
+        action = payload["actions"][0]
+        return SlackAction(
+            action_id=action["action_id"],
+            incident_id=int(action["value"]),
+            user_id=payload["user"]["id"],
+            username=payload["user"].get("username", payload["user"]["id"]),
+            message_ts=payload["message"]["ts"],
+        )
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        logger.warning("malformed Slack interaction payload: %r", exc)
+        raise HTTPException(status_code=400, detail="malformed Slack interaction payload") from exc
 
 
-def _process_rejection(incident_id: int, user: str, message_ts: str) -> None:
+def _process_approval(action: SlackAction) -> None:
     try:
-        reject_incident(incident_id)
-        update_incident_card(message_ts, f"\u274c Incident #{incident_id} rejected by @{user}")
-    except Exception:  # noqa: BLE001
-        logger.exception("rejection processing failed for incident #%s", incident_id)
+        success, detail = execute_remediation(action.incident_id, approved_by=action.actor)
+        icon = "✅" if success else "⚠️"
+        update_incident_card(
+            action.message_ts, f"{icon} Incident #{action.incident_id} — {detail} (approved by @{action.username})"
+        )
+    except Exception:
+        # Runs after the response was sent, so log instead of raising into nowhere.
+        logger.exception("approval processing failed for incident #%s", action.incident_id)
+
+
+def _process_rejection(action: SlackAction) -> None:
+    try:
+        reject_incident(action.incident_id)
+        update_incident_card(action.message_ts, f"❌ Incident #{action.incident_id} rejected by @{action.username}")
+    except Exception:
+        logger.exception("rejection processing failed for incident #%s", action.incident_id)

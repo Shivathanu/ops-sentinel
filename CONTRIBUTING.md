@@ -16,9 +16,10 @@ CI runs the same two commands on Python 3.10 and 3.12.
 - **Reads and writes stay separate.** Investigation goes through `mcp_client.py` only. Anything that writes goes
   through `remediation.py`. Do not add a second path that executes model-suggested SQL.
 - **Widen the guardrail with tests.** Add the real remediation pattern to
-  `tests/test_remediation_guardrail.py` first, then change `_validate_fix_sql`.
+  `tests/test_guardrail.py` first, then change `guardrail.py`.
 - **Known gaps are strict `xfail` tests.** When you fix one, the test starts passing and fails the suite until you
   remove its marker. That is intended.
+- **Fail closed.** A missing credential, key or allow-list must refuse the action, never fall back to a weaker path.
 - **pyexasol binds parameters by name.** Use `{name}` placeholders with a dict, and `{name!d}` for numeric
   values; the default conversion quotes everything as a string, which Exasol rejects in numeric contexts.
 - **Type every signature and log every fallback.** A function that resolves to a default must say so in the log.

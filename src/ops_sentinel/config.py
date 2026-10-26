@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,20 +31,39 @@ class Settings(BaseSettings):
         '"enable_query_profiling": true, "enable_write_query": false, '
         '"enable_write_bucketfs": false}'
     )
-    exa_ssl_cert_validation: str = "no"
+    exa_ssl_cert_validation: str = "yes"  # set to "no" only for a local self-signed instance
 
-    # Exasol admin (write path — remediation only)
+    # Exasol engine connection: incident bookkeeping, audit rows and dashboard aggregation. The EXASOL_ADMIN_*
+    # names are kept for compatibility, but this should be the limited `sentinel_engine` user from
+    # sql/roles.sql, never SYS.
     exasol_admin_host: str = "127.0.0.1"
     exasol_admin_port: str = "8563"
-    exasol_admin_user: str = "sys"
+    exasol_admin_user: str = ""
     exasol_admin_password: str = ""
     exasol_schema: str = "SENTINEL"
     exasol_pool_size: int = 5
+    exasol_validate_certificate: bool = True  # set to false only for a local self-signed instance
+
+    # Exasol executor connection: runs approved, guardrail-validated remediation SQL and nothing else. It has
+    # data-table privileges only, so it cannot touch INCIDENTS or the audit trail even if the guardrail failed.
+    exasol_executor_user: str = ""
+    exasol_executor_password: str = ""
+
+    # API authentication for /api/*. Fails closed: with no key and auth not explicitly disabled, the API
+    # answers 503.
+    api_key: str = Field(default="", validation_alias="OPS_SENTINEL_API_KEY")
+    api_auth_disabled: bool = Field(default=False, validation_alias="OPS_SENTINEL_API_AUTH_DISABLED")
+
+    # Comma-separated Slack user IDs (for example U012ABCDEF) allowed to approve or reject. Empty means nobody.
+    slack_approver_ids: str = ""
 
     # Watcher
     watch_interval_seconds: int = 10
     cost_spike_threshold_usd: float = 5.0
     trust_score_window_hours: int = 24
+
+    def approver_ids(self) -> frozenset[str]:
+        return frozenset(part.strip() for part in self.slack_approver_ids.split(",") if part.strip())
 
 
 settings = Settings()

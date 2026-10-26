@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ENGINE_BASE_URL = os.getenv("ENGINE_BASE_URL", "http://localhost:8000")
+API_KEY = os.getenv("OPS_SENTINEL_API_KEY", "")
 
 st.set_page_config(page_title="Ops Sentinel", page_icon="🛡️", layout="wide")
 st.title("🛡️ Ops Sentinel — Platform Command Center")
@@ -17,8 +18,10 @@ st.title("🛡️ Ops Sentinel — Platform Command Center")
 
 @st.cache_data(ttl=5)
 def fetch(path: str) -> dict:
-    with httpx.Client(timeout=5) as client:
-        return client.get(f"{ENGINE_BASE_URL}{path}").json()
+    with httpx.Client(timeout=5, headers={"X-API-Key": API_KEY}) as client:
+        response = client.get(f"{ENGINE_BASE_URL}{path}")
+        response.raise_for_status()
+        return response.json()
 
 
 col1, col2 = st.columns(2)
@@ -28,7 +31,10 @@ try:
     col1.metric("Platform Trust Score", f"{trust}%")
     col2.metric("Cloud Efficiency Rating", f"{efficiency}%")
 except httpx.HTTPError:
-    st.error("Could not reach the Ops Sentinel engine. Is `uvicorn ops_sentinel.main:app` running?")
+    st.error(
+        "Could not get data from the Ops Sentinel engine. Is `uvicorn ops_sentinel.main:app` running, "
+        "and does OPS_SENTINEL_API_KEY match the engine's key?"
+    )
     st.stop()
 
 st.subheader("Recent Incidents")

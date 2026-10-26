@@ -21,8 +21,8 @@ Ops Sentinel is one FastAPI service plus a Streamlit dashboard, with Exasol as t
 | Path | Module | Credential | Can write? |
 | --- | --- | --- | --- |
 | Investigation | `mcp_client.py` | `EXA_USER`, read-only login enforced by Exasol | No |
-| Detection bookkeeping, scoring | `db.py` | admin connection from a small pool | Only Sentinel's own `INCIDENTS` rows |
-| Remediation | `remediation.py` | admin connection | Yes, after approval and guardrail |
+| Detection bookkeeping, scoring | `db.py` | `sentinel_engine` (`EXASOL_ADMIN_*`), pooled | Only Sentinel's own `INCIDENTS` rows and the append-only audit table |
+| Remediation | `remediation.py` | `sentinel_executor` (`EXASOL_EXECUTOR_*`) | Business tables only, after approval and guardrail |
 
 Only `remediation.py` executes model-suggested SQL.
 
@@ -30,10 +30,13 @@ Only `remediation.py` executes model-suggested SQL.
 
 1. **Atomic claim.** `UPDATE INCIDENTS SET STATUS = 'APPROVED' WHERE STATUS = 'AWAITING_APPROVAL'` succeeds for
    exactly one caller, so a double click or a retried Slack delivery cannot run a fix twice.
-2. **Guardrail.** `_validate_fix_sql` allows one statement, with a leading verb from an allow-list
-   (`INSERT`, `UPDATE`, `MERGE`, `DELETE`, `CALL`, `SELECT`), rejects schema and permission keywords, and rejects
-   `UPDATE` and `DELETE` without a `WHERE`.
-3. **Audit.** Every outcome, including blocked ones, is written to `REMEDIATION_ACTIONS` with who approved it.
+2. **Guardrail.** `guardrail.validate_fix_sql` masks string literals, rejects comments, allows exactly one statement
+   with a verb from an allow-list (`INSERT`, `UPDATE`, `MERGE`, `DELETE`, `SELECT`), rejects schema, permission and
+   external-I/O keywords, Sentinel's own tables and system objects, requires a real (non-tautological) top-level
+   `WHERE` on `UPDATE` and `DELETE`, and restricts the target to the incident's tables plus one lineage hop.
+3. **Least privilege.** The executor user has no grants on Sentinel's tables (`sql/roles.sql`), so a guardrail
+   bug still cannot rewrite incidents or the audit trail.
+4. **Audit.** Every outcome, including blocked ones, is written to `REMEDIATION_ACTIONS` with who approved it.
 
 ## Incident states
 
