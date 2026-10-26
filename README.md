@@ -1,172 +1,117 @@
 # Ops Sentinel
 
-> The Autonomous, Cost-Aware Platform Command Center — ExaThon India 2026
+> The autonomous, cost-aware platform command center.
 
-Ops Sentinel closes the loop between **data reliability** (pipeline failures) and
-**cloud cost waste** (runaway/duplicate queries) using Exasol Personal as the
-metadata/analytics layer, MCP as the read-only investigation path, an LLM as the
-triage agent, and Slack as the human-approval gate before anything is ever
-re-executed against the database.
+Ops Sentinel watches an [Exasol](https://www.exasol.com/) database for failed data pipelines and
+runaway query costs, investigates each incident over the Model Context Protocol (MCP), asks an LLM for
+a business-impact summary and a proposed fix, and sends it to Slack as an Approve / Reject card.
+Nothing is executed until a human approves, and every approved action passes a deterministic guardrail
+and lands in an audit table.
 
-## Why this is not a "plugin / npm package / tool file"
+## The problem
 
-It is a small **multi-service platform**: a database, a FastAPI orchestration
-engine, a Streamlit dashboard, and a Slack app — four things that talk to each
-other over the network, not one thing that gets installed into a host app.
-Each module below maps directly onto the brief's Module A/B/C split so it can
-be parallelized across a 1–3 person team.
+A platform engineering lead cannot scale business operations efficiently because overnight data pipeline
+failures disrupt company-wide decision trust, while unoptimized query compute costs silently drain the
+infrastructure budget before engineers can manually triage them. If this solution works, the organization
+will maintain trusted data freshness and eliminate infrastructural cost waste through automated,
+human-verified remediation.
 
-## Architecture (6-step loop)
-
-```
-Event Log / Compute Spike
-        │ (ingested into Exasol)
-        ▼
-Exasol Personal (PIPELINE_LOGS, QUERY_METRICS, DATA_LINEAGE)
-        │ watcher.py polls for new FAILED rows / cost spikes
-        ▼
-engine/watcher.py  ──MCP (read-only)──▶  error log + lineage context
-        │
-        ▼
-engine/triage_agent.py  ──LLM API──▶  business-impact narrative + patch SQL
-        │
-        ▼
-engine/slack_notifier.py  ──Slack Block Kit──▶  Approve / Reject card
-        │ (engineer clicks a button)
-        ▼
-engine/main.py: POST /slack/interactions  ──verifies signature──▶
-        │
-        ▼
-engine/remediation.py  ──admin pyexasol (write path, NOT MCP)──▶  re-run SQL
-        │
-        ▼
-Exasol tables refreshed → dashboard/app.py reflects new Trust / Efficiency scores
-```
-
-**Read vs. write split (important):** the Exasol MCP server login is
-database-enforced read-only. Ops Sentinel uses it for investigation (steps
-2–3) and uses a *separate* admin `pyexasol` connection, gated by an explicit
-Slack approval, for the one privileged action in step 5. Every remediation is
-written to `REMEDIATION_ACTIONS` for audit.
-
-## Repo layout
+## How it works
 
 ```
-db/            Module A — schema + synthetic seed data
-engine/        Module B — FastAPI engine: MCP client, LLM triage, Slack, remediation
-dashboard/     Module C (dashboard half) — Streamlit Trust Score / Efficiency Rating
-scripts/       Helper scripts (seeding, demo incident injection)
+event / cost spike ─► Exasol (PIPELINE_LOGS, QUERY_METRICS) ─► watcher detects ─► INCIDENTS row
+                                                                      │
+        read-only MCP login: error log + downstream lineage ◄─────────┘
+                                   │
+                          LLM triage (impact, root cause, fix SQL)
+                                   │
+                       Slack card: Approve / Reject ──► guardrail ──► write connection ──► audit row
+                                                                                   │
+                              dashboard: Trust Score and Efficiency Rating ◄───────┘
 ```
 
-## Status: Exasol + MCP are live on this machine
+Investigation runs on a database-enforced read-only login through MCP. The one privileged action, the
+approved remediation, uses a separate write connection. See [docs/architecture.md](docs/architecture.md).
 
-The Exasol Personal Local Starter Kit is installed and running (`exakit status`),
-`db/schema.sql` is applied, and `scripts/seed_data.py` / `scripts/inject_demo_incident.py`
-have populated real data. `.env` holds this machine's real connection details
-(DSN, admin credentials, and the MCP read-only login — see `exakit info`).
+## Status
 
-Two things to know before you run anything yourself:
+| Part | State |
+| --- | --- |
+| Detection, MCP investigation, dashboard API, remediation guardrail and audit | Exercised against a live Exasol Personal instance during development |
+| LLM triage | Implemented, not yet exercised with a live key |
+| Slack approval card | Implemented, not yet exercised with a live bot token |
+| Offline demo (`scripts/dry_run.py`) | Runs the whole loop against an in-memory SQLite stand-in, no credentials needed |
 
-1. **pyexasol binds parameters by name, not position.** `conn.execute(sql, params)`
-   uses `{name}` placeholders bound from a dict — not `?` markers. Its default
-   conversion also quotes every value as a string, which Exasol rejects in
-   numeric contexts (`LIMIT '20'` fails) — use the `{x!d}` conversion for any
-   numeric placeholder. Every query in `engine/` already does this correctly;
-   keep the pattern if you add more.
-2. **The MCP server needs `uvx`** (installed by the starter kit at
-   `~/.local/bin`) and downloads `exasol-mcp-server` on first use — the very
-   first MCP call takes ~60-90s, after which `uv`'s cache makes it fast.
+## Quickstart
 
-Proven working end to end against the live database in this session:
-- **Detection** — the real watcher polled `PIPELINE_LOGS`/`QUERY_METRICS` and created real `INCIDENTS` rows.
-- **MCP investigation** — the real `uvx exasol-mcp-server` was spawned and returned real error context + lineage (25 tools discovered).
-- **Dashboard API** — `/api/trust-score`, `/api/efficiency-score`, `/api/incidents` all returned `200 OK` computed from live data.
-- **Remediation guardrail** — a real `DELETE FROM sales_clean` (no `WHERE`) was blocked before touching data; a real approved `UPDATE` was applied and changed real rows; a duplicate approval was rejected by the atomic claim. All three outcomes landed in the real `REMEDIATION_ACTIONS` audit table.
-- **Not yet real**: LLM triage and Slack notifications — no `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`SLACK_BOT_TOKEN` are set in `.env`. The watcher detects this, logs it, and moves on without crashing (see `engine/watcher.py`'s `_handle_incident_safely`). Add those keys to `.env` and the exact same code path becomes fully real — no code changes needed.
+Requires Python 3.10 or newer and, for the live loop, an Exasol Personal instance.
 
-To rerun this yourself:
-```powershell
+```bash
 python -m venv .venv
-.\.venv\Scripts\pip install -r engine\requirements.txt
-$env:PYTHONPATH = "$PWD"; $env:PYTHONUTF8 = "1"
-.\.venv\Scripts\python.exe -m uvicorn engine.main:app --port 8000
-# in another terminal:
-.\.venv\Scripts\python.exe scripts\inject_demo_incident.py
-.\.venv\Scripts\python.exe scripts\test_mcp_read.py          # proves the MCP read path
-.\.venv\Scripts\python.exe scripts\test_remediation_live.py  # proves the write path + guardrail
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[dashboard]"
+cp .env.example .env               # Windows: copy .env.example .env, then fill in the values
 ```
 
-## See it run right now, with nothing installed
+See the offline demo first, no database or keys needed:
 
-Before touching Exasol, Slack, or an LLM key, you can watch the full 6-step
-loop execute for real — it uses an in-memory SQLite stand-in for Exasol, and
-automatically upgrades any step to a real call the moment you add the
-matching credential to `.env` (LLM triage and the Slack card both do this;
-the MCP read step stays simulated until `exakit` is installed, since that's
-the piece Exasol itself provides):
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\pip install pydantic-settings python-dotenv pyexasol
-$env:PYTHONPATH = "$PWD"; $env:PYTHONUTF8 = "1"
-.\.venv\Scripts\python.exe scripts\dry_run.py
+```bash
+python scripts/dry_run.py
 ```
 
-This also doubles as a smoke test for `engine/remediation.py`'s safety
-guardrail — the run prints three deliberately dangerous SQL strings (`DROP
-TABLE`, an unscoped `DELETE`, a multi-statement payload) and shows the real
-validation function rejecting each one before showing the approved fix
-actually being applied.
+Then run it for real:
 
-## Setup (weekend build order)
+```bash
+exapump sql -p starter-kit -f sql/schema.sql      # create the SENTINEL schema
+python scripts/seed_data.py                       # load synthetic data only
+python -m uvicorn ops_sentinel.main:app --port 8000
+streamlit run dashboard/app.py                    # in a second terminal
+python scripts/inject_demo_incident.py            # in a third: simulate a failure and a cost spike
+```
 
-### Day 1 morning — Module A (whoever is comfortable with SQL)
-1. Install the Exasol Personal Local Starter Kit (one command — ask your AI
-   assistant to "set up the Exasol starter kit" or run it yourself):
-   - macOS/Linux/WSL: `curl https://www.exasol.com/install/starter-kit.sh | sh`
-   - Windows PowerShell: `irm https://www.exasol.com/install/starter-kit.ps1 | iex`
-2. Connect an MCP client: `exakit mcp-setup` (pick Cursor/Claude/etc.)
-3. Create the schema and load synthetic data:
-   ```powershell
-   exapump sql -p starter-kit -f db/schema.sql
-   python scripts/seed_data.py
-   ```
-4. Sanity check: ask your MCP-connected assistant to list tables in the
-   `SENTINEL` schema and show you the SQL before running anything (same
-   inspect-before-run discipline as the rest of the kit).
+For the Slack approval step, set `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` and `SLACK_CHANNEL_ID` in `.env`
+and point the Slack app's Interactivity Request URL at `https://<your-host>/slack/interactions`.
+For triage, set `LLM_PROVIDER` and the matching API key. Without these credentials the engine still detects and
+investigates incidents, but skips triage and the Slack card and logs that it did.
 
-### Day 1 afternoon — Module B (whoever owns backend/Python)
-1. `python -m venv .venv && .venv\Scripts\activate` (Windows) then
-   `pip install -r engine/requirements.txt`
-2. Copy `.env.example` to `.env` and fill in:
-   - `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
-   - `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `SLACK_CHANNEL_ID`
-   - `EXASOL_ADMIN_*` (the admin connection used only for remediation writes —
-     `exakit info` shows where the password is stored)
-3. Run the engine: `uvicorn engine.main:app --reload --port 8000`
-4. Expose it to Slack for interactivity callbacks during the demo:
-   `ngrok http 8000`, then set the Slack app's **Interactivity Request URL**
-   to `https://<ngrok-id>.ngrok.io/slack/interactions`.
+## Configuration
 
-### Day 2 morning — Module C (whoever owns frontend)
-1. `pip install -r dashboard/requirements.txt`
-2. `streamlit run dashboard/app.py` — reads from the engine's REST API
-   (`/api/trust-score`, `/api/efficiency-score`, `/api/incidents`).
+All settings come from environment variables or `.env`; [.env.example](.env.example) lists every one with
+its default. The database is only ever loaded with synthetic or public data.
 
-### Day 2 afternoon — integration + demo script
-1. Run `python scripts/inject_demo_incident.py` to simulate a pipeline
-   failure and a cost-spike query landing in Exasol.
-2. Watch `watcher.py` logs: it should detect the row, call MCP for context,
-   call the LLM, and post a Slack card within a few seconds.
-3. Click **Approve** in Slack → confirm `remediation.py` re-runs the fix and
-   the dashboard's Trust Score / Efficiency Rating move.
-4. Rehearse the "no" path too — click **Reject** and show the incident stays
-   open, nothing executes.
+## Repository layout
 
-## Team split (1–3 people)
+```
+src/ops_sentinel/   engine: watcher, MCP client, LLM triage, Slack notifier, remediation, scoring, API
+dashboard/          Streamlit command dashboard (reads the engine's REST API)
+sql/schema.sql      Exasol schema
+scripts/            seeding, demo incident injection, offline demo, live checks
+tests/              unit tests (guardrail, triage routing, MCP parsing, API)
+docs/               architecture
+```
 
-| People | Split |
-|---|---|
-| 1 | Do Module A first (fast), then B, then C — in that order, since B depends on A and C depends on B. |
-| 2 | Person 1: Module A + Module B's `mcp_client.py`/`triage_agent.py`. Person 2: Module B's `main.py`/`slack_notifier.py`/`remediation.py` + Module C. |
-| 3 | Person 1: Module A. Person 2: Module B. Person 3: Module C + the Slack app config/ngrok plumbing + demo script. |
+## Development
+
+```bash
+pip install -e ".[dev,dashboard]"
+ruff check .
+pytest
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
+
+## Known limitations
+
+Tracked as strict expected-failure tests, so they cannot be forgotten:
+
+- `/api/*` endpoints have no authentication.
+- The guardrail counts a `WHERE` inside an SQL comment as a scope, so a commented-out `WHERE` passes the
+  unscoped `UPDATE` and `DELETE` check.
+
+Also open: remediation connects with the Exasol admin account (`sys`) instead of a least-privilege user,
+certificate validation to Exasol is disabled for the local starter kit, and the watcher must run as a
+single process.
+
+## License
+
+[Apache License 2.0](LICENSE).
