@@ -1,6 +1,6 @@
 import { FIX_ID_PATTERN, UsageError, type FixConfig, type Source } from "./config.js";
 import { newState, trackIncident, describe, type MonitorContext, type SourceState } from "./monitor.js";
-import { redact, tail } from "./redact.js";
+import { head, redact, tail } from "./redact.js";
 import { runCommand } from "./runner.js";
 
 export interface WrapOptions {
@@ -36,7 +36,7 @@ export async function runWrapped(ctx: MonitorContext, options: WrapOptions, sign
   try {
     const incidentId = await ctx.engine.reportFailure({
       source: options.name,
-      job: tail(redact(options.command, ctx.secrets), 200),
+      job: head(redact(options.command, ctx.secrets), 200),
       error: tail(redact(run.spawnError ?? run.output, ctx.secrets), 3800),
       exit_code: run.exitCode,
       fix_id: options.fix?.id ?? null,

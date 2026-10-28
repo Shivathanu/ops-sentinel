@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { redact, tail } from "../src/redact.js";
+import { head, redact, tail } from "../src/redact.js";
 
 test("redacts common credential shapes", () => {
   const cases: Array<[string, string]> = [
@@ -39,4 +39,9 @@ test("leaves ordinary error text alone", () => {
 test("tail keeps the end of a long log", () => {
   assert.equal(tail("0123456789", 4), "6789");
   assert.equal(tail("abc", 10), "abc");
+});
+
+test("head keeps the start of a long label and marks the cut", () => {
+  assert.equal(head("0123456789", 5), "0123…");
+  assert.equal(head("abc", 10), "abc");
 });

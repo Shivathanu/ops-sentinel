@@ -1,7 +1,7 @@
 import { EngineError, type Engine, type ResultReport } from "./client.js";
 import type { Config, FixConfig, Source } from "./config.js";
 import type { EventSink } from "./log.js";
-import { redact, tail } from "./redact.js";
+import { head, redact, tail } from "./redact.js";
 import { describeExit, runCommand } from "./runner.js";
 import { createProbe, jobLabel, type Probe } from "./sources.js";
 
@@ -57,7 +57,7 @@ export async function checkSource(ctx: MonitorContext, source: Source, probe: Pr
   try {
     const incidentId = await ctx.engine.reportFailure({
       source: source.name,
-      job: tail(redact(jobLabel(source), ctx.secrets), MAX_JOB_CHARS),
+      job: head(redact(jobLabel(source), ctx.secrets), MAX_JOB_CHARS),
       error: tail(redact(result.error, ctx.secrets), MAX_ERROR_CHARS),
       exit_code: result.exitCode,
       fix_id: source.fix?.id ?? null,

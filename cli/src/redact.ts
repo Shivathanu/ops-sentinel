@@ -32,6 +32,11 @@ export function redact(text: string, exactSecrets: readonly string[] = []): stri
   return result;
 }
 
+/** The first `max` characters, for labels where the beginning identifies the thing (a command line). */
+export function head(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
 /** The last `max` characters: the end of a log is where the failure is. */
 export function tail(text: string, max: number): string {
   return text.length <= max ? text : text.slice(text.length - max);
