@@ -1,0 +1,39 @@
+{
+  "name": "ops-sentinel-cli",
+  "version": "0.1.0",
+  "description": "Watches your own automation (jobs, log files, HTTP endpoints), reports failures to an Ops Sentinel engine, and runs a pre-approved fix only after a named person approves it.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "sentinel": "dist/src/index.js",
+    "ops-sentinel": "dist/src/index.js"
+  },
+  "files": [
+    "dist/src",
+    "!dist/src/**/*.map",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "incident-response",
+    "automation",
+    "ops",
+    "remediation",
+    "approval",
+    "cli"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}

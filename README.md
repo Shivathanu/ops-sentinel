@@ -79,14 +79,29 @@ investigates incidents, but skips triage and the Slack card and logs that it did
 All settings come from environment variables or `.env`; [.env.example](.env.example) lists every one with
 its default. The database is only ever loaded with synthetic or public data.
 
+## Watch any automation with the CLI
+
+The engine is not limited to database jobs. The [`cli/`](cli/README.md) package (`ops-sentinel-cli`, a Node tool
+meant for npm) runs next to your own automation, watches a command, a log file or an HTTP endpoint, and reports a
+failure to the engine. The incident then goes through the same triage, Slack approval and audit trail.
+
+```bash
+sentinel watch                                   # watch every source in sentinel.config.json
+sentinel run --name nightly-export -- ./export.sh   # or wrap a single command in cron or CI
+```
+
+The fix for such an incident is a command **in your own config file**. The engine only ever sees its id, and on
+approval tells the agent to run that id, so the engine can never make a client machine run an arbitrary command.
+
 ## Repository layout
 
 ```
 src/ops_sentinel/   engine: watcher, MCP client, LLM triage, Slack notifier, remediation, scoring, API
 dashboard/          Streamlit command dashboard (reads the engine's REST API)
+cli/                ops-sentinel-cli: TypeScript agent that watches client automation (npm package)
 sql/schema.sql      Exasol schema
 scripts/            seeding, demo incident injection, offline demo, live checks
-tests/              unit tests (guardrail, triage routing, MCP parsing, API)
+tests/              unit tests (guardrail, triage routing, MCP parsing, API, agent events)
 docs/               architecture
 ```
 
@@ -121,6 +136,8 @@ of falling back to something weaker.
 
 - `sql/roles.sql` is provided but not applied automatically; until you run it and set the engine and executor
   users, the app refuses to start database work.
+- Agent incidents are not de-duplicated by the engine; the CLI de-duplicates per source, so two agents watching the
+  same thing would each report it.
 - The watcher must run as a single process; two workers could both pick up the same failure.
 - `scripts/` helpers still connect with certificate validation off and are for local demos only.
 - The guardrail is a deny-by-default filter, not a SQL parser. Widen it only with a test that pins the pattern.

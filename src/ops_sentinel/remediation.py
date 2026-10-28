@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 
 import pyexasol
 
+from ops_sentinel.agent_actions import SOURCE_TYPE as AGENT_SOURCE_TYPE
+from ops_sentinel.agent_actions import parse_fix_id
 from ops_sentinel.config import settings
 from ops_sentinel.db import get_connection, get_executor_connection
 from ops_sentinel.guardrail import validate_fix_sql
@@ -35,7 +37,11 @@ def execute_remediation(incident_id: int, approved_by: str) -> tuple[bool, str]:
             )
             return False, "Incident is not awaiting approval (already resolved or a duplicate action) — ignoring."
 
-        fix_sql = _load_fix_sql(conn, incident_id)
+        source_type, fix_sql = _load_fix(conn, incident_id)
+        agent_fix_id = parse_fix_id(fix_sql) if source_type == AGENT_SOURCE_TYPE else None
+        if agent_fix_id is not None:
+            return _approve_agent_action(conn, incident_id, agent_fix_id, fix_sql or "", approved_by)
+
         verdict = validate_fix_sql(
             fix_sql,
             allowed_tables=_incident_tables(conn, incident_id),
@@ -84,12 +90,29 @@ def _claim_incident(conn: pyexasol.ExaConnection, incident_id: int) -> bool:
     return claim.rowcount() > 0
 
 
-def _load_fix_sql(conn: pyexasol.ExaConnection, incident_id: int) -> str | None:
+def _load_fix(conn: pyexasol.ExaConnection, incident_id: int) -> tuple[str | None, str | None]:
+    """The incident's source type and its suggested fix text."""
     row = conn.execute(
-        "SELECT SUGGESTED_FIX_SQL FROM INCIDENTS WHERE INCIDENT_ID = {incident_id!d}",
+        "SELECT SUGGESTED_FIX_SQL, SOURCE_TYPE FROM INCIDENTS WHERE INCIDENT_ID = {incident_id!d}",
         {"incident_id": incident_id},
     ).fetchone()
-    return row[0] if row else None
+    return (row[1], row[0]) if row else (None, None)
+
+
+def _approve_agent_action(
+    conn: pyexasol.ExaConnection, incident_id: int, fix_id: str, fix_text: str, approved_by: str
+) -> tuple[bool, str]:
+    """Records the approval of a fix the client-side agent runs itself.
+
+    The incident stays APPROVED, which is the agent's signal to run the fix. It reports the outcome through
+    `agent_events.record_result`, which is what moves the incident to REMEDIATED or FAILED.
+    """
+    append_audit(
+        conn, incident_id, fix_text, approved_by, "APPROVED",
+        f"Approved; waiting for the client agent to run '{fix_id}'.",
+    )
+    logger.info("agent action '%s' for incident #%s approved by %s", fix_id, incident_id, approved_by)
+    return True, f"Approved. The client agent will run '{fix_id}' and report back."
 
 
 def _incident_tables(conn: pyexasol.ExaConnection, incident_id: int) -> frozenset[str]:
@@ -160,14 +183,21 @@ def _record_outcome(
             "incident_id": incident_id,
         },
     )
+    append_audit(conn, incident_id, executed_sql, approved_by, outcome, detail)
+
+
+def append_audit(
+    conn: pyexasol.ExaConnection, incident_id: int, executed: str, actor: str, outcome: str, detail: str
+) -> None:
+    """Appends one row to the audit trail; the executed text is SQL, or an agent action marker."""
     conn.execute(
         "INSERT INTO REMEDIATION_ACTIONS "
         "(INCIDENT_ID, EXECUTED_SQL, EXECUTED_BY, EXECUTED_TS, OUTCOME, OUTCOME_DETAIL) "
         "VALUES ({incident_id!d}, {executed_sql}, {executed_by}, {executed_ts}, {outcome}, {detail})",
         {
             "incident_id": incident_id,
-            "executed_sql": executed_sql,
-            "executed_by": approved_by,
+            "executed_sql": executed,
+            "executed_by": actor,
             "executed_ts": _utcnow(),
             "outcome": outcome,
             "detail": detail,

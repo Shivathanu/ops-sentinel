@@ -5,6 +5,10 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `ops-sentinel-cli` (`cli/`): a zero-dependency TypeScript CLI that watches commands, log files and HTTP endpoints, reports failures to the engine, and runs a pre-approved fix from the client's own config once a person approves it. Commands: `init`, `check`, `watch`, `run`, `status`.
+- Engine endpoints `POST /api/events`, `GET /api/events/{id}` and `POST /api/events/{id}/result`, and `CLI_EVENT` incidents (`agent_events.py`, `agent_actions.py`).
+
 ### Security
 - Rewrote the remediation guardrail (`guardrail.py`): masks literals, rejects comments (a commented-out `WHERE` no longer passes), allows one statement, blocks Sentinel and system tables, and restricts targets to the incident's tables.
 - `/api/*` requires `X-API-Key`; Slack approvals are limited to `SLACK_APPROVER_IDS`; both fail closed.

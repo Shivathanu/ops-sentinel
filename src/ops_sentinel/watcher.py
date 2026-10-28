@@ -85,7 +85,7 @@ async def _handle_incident_safely(source_type: str, source_ref_id: int,
 
 async def _handle_incident(source_type: str, source_ref_id: int,
                             pipeline_id: str | None, table_name: str | None):
-    incident_id = await asyncio.to_thread(_create_incident_row, source_type, source_ref_id)
+    incident_id = await asyncio.to_thread(create_incident_row, source_type, source_ref_id)
     logger.info("detected %s -> incident #%s", source_type, incident_id)
 
     error_context = {}
@@ -94,7 +94,7 @@ async def _handle_incident(source_type: str, source_ref_id: int,
     lineage = await get_lineage_for_table(table_name) if table_name else []
 
     triage_result = await asyncio.to_thread(triage, error_context, lineage)
-    await asyncio.to_thread(_update_incident_triage, incident_id, triage_result)
+    await asyncio.to_thread(update_incident_triage, incident_id, triage_result)
 
     message_ts = await asyncio.to_thread(
         post_incident_card,
@@ -105,10 +105,10 @@ async def _handle_incident(source_type: str, source_ref_id: int,
         suggested_fix_sql=triage_result.get("suggested_fix_sql"),
         risk_level=triage_result.get("risk_level", "HIGH"),
     )
-    await asyncio.to_thread(_store_slack_ts, incident_id, message_ts)
+    await asyncio.to_thread(store_slack_ts, incident_id, message_ts)
 
 
-def _create_incident_row(source_type: str, source_ref_id: int) -> int:
+def create_incident_row(source_type: str, source_ref_id: int) -> int:
     with get_connection() as conn:
         conn.execute(
             "INSERT INTO INCIDENTS (SOURCE_TYPE, SOURCE_REF_ID, CREATED_TS, STATUS) "
@@ -118,7 +118,7 @@ def _create_incident_row(source_type: str, source_ref_id: int) -> int:
         return conn.execute("SELECT MAX(INCIDENT_ID) FROM INCIDENTS").fetchone()[0]
 
 
-def _update_incident_triage(incident_id: int, triage_result: dict) -> None:
+def update_incident_triage(incident_id: int, triage_result: dict) -> None:
     with get_connection() as conn:
         conn.execute(
             "UPDATE INCIDENTS SET STATUS = 'AWAITING_APPROVAL', BUSINESS_IMPACT = {business_impact}, "
@@ -134,7 +134,7 @@ def _update_incident_triage(incident_id: int, triage_result: dict) -> None:
         )
 
 
-def _store_slack_ts(incident_id: int, message_ts: str) -> None:
+def store_slack_ts(incident_id: int, message_ts: str) -> None:
     with get_connection() as conn:
         conn.execute(
             "UPDATE INCIDENTS SET SLACK_MESSAGE_TS = {message_ts} WHERE INCIDENT_ID = {incident_id!d}",

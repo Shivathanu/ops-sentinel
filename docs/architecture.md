@@ -38,6 +38,21 @@ Only `remediation.py` executes model-suggested SQL.
    bug still cannot rewrite incidents or the audit trail.
 4. **Audit.** Every outcome, including blocked ones, is written to `REMEDIATION_ACTIONS` with who approved it.
 
+## Agent incidents (the CLI)
+
+`POST /api/events` lets the client-side CLI agent (`cli/`) report a failure of its own automation. The engine opens
+an incident with source type `CLI_EVENT`, triages the error with the LLM and posts the usual Slack card, but the
+proposed fix is only a marker such as `ACTION: rerun-export (agent source=..., job=...)` (see `agent_actions.py`).
+
+1. Approval records an `APPROVED` audit row and leaves the incident `APPROVED`. The engine runs nothing: the marker is
+   not SQL, and `remediation.py` only honours it for `CLI_EVENT` incidents.
+2. The agent sees `GET /api/events/{id}` return `APPROVED` with the fix id, runs the command it has for that id in its
+   own config, and posts the outcome to `POST /api/events/{id}/result`.
+3. The result moves the incident to `REMEDIATED` or `FAILED` through an `UPDATE ... WHERE STATUS = 'APPROVED' AND
+   SOURCE_TYPE = 'CLI_EVENT'`, so it cannot reopen or overwrite a finished incident, and appends the audit row.
+
+The model never chooses the fix: it only analyses the failure, and whatever SQL it suggests is discarded.
+
 ## Incident states
 
 ```

@@ -26,3 +26,9 @@ htmlcov/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# CLI package
+cli/node_modules/
+cli/dist/
+cli/examples/.healed
+.sentinel/

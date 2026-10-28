@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from slack_sdk.signature import SignatureVerifier
 
+from ops_sentinel import agent_events
 from ops_sentinel.config import settings
 from ops_sentinel.remediation import execute_remediation, reject_incident
 from ops_sentinel.scoring import compute_efficiency_score, compute_trust_score, recent_incidents
@@ -89,6 +90,30 @@ async def efficiency_score() -> dict[str, float]:
 @app.get("/api/incidents", dependencies=[Depends(require_api_key)])
 async def incidents() -> dict[str, list[dict]]:
     return {"incidents": await asyncio.to_thread(recent_incidents)}
+
+
+@app.post("/api/events", status_code=202, dependencies=[Depends(require_api_key)])
+async def report_event(event: agent_events.FailureEvent, background_tasks: BackgroundTasks) -> dict[str, int]:
+    """A client-side agent reports a failure. Triage and the Slack card follow in the background."""
+    incident_id = await asyncio.to_thread(agent_events.open_incident, event)
+    background_tasks.add_task(agent_events.triage_and_notify, incident_id, event)
+    return {"incident_id": incident_id}
+
+
+@app.get("/api/events/{incident_id}", dependencies=[Depends(require_api_key)])
+async def event_status(incident_id: int) -> dict[str, object]:
+    status = await asyncio.to_thread(agent_events.get_status, incident_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="no agent incident with that id")
+    return {"incident_id": status.incident_id, "status": status.status, "fix_id": status.fix_id}
+
+
+@app.post("/api/events/{incident_id}/result", dependencies=[Depends(require_api_key)])
+async def event_result(incident_id: int, result: agent_events.EventResult) -> dict[str, bool]:
+    recorded = await asyncio.to_thread(agent_events.record_result, incident_id, result)
+    if not recorded:
+        raise HTTPException(status_code=409, detail="incident is not an approved agent incident")
+    return {"recorded": True}
 
 
 @app.post("/slack/interactions")

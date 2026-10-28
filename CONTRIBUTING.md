@@ -9,6 +9,12 @@ ruff check .
 pytest
 ```
 
+The CLI has its own checks (Node 18.17 or newer):
+
+```bash
+cd cli && npm install && npm test
+```
+
 CI runs the same two commands on Python 3.10 and 3.12.
 
 ## Rules of the codebase

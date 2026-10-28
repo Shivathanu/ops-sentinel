@@ -60,10 +60,16 @@ class FakeExecutor:
         self.statements.append(statement)
 
 
-def _engine(fix_sql: str | None, *, claimed: bool = True, pipeline_row: tuple | None = ("sales_raw", "sales_clean")) -> FakeConnection:
+def _engine(
+    fix_sql: str | None,
+    *,
+    claimed: bool = True,
+    pipeline_row: tuple | None = ("sales_raw", "sales_clean"),
+    incident_source: str = "PIPELINE_FAILURE",
+) -> FakeConnection:
     return FakeConnection([
         ("SET STATUS = 'APPROVED'", FakeResult(rowcount=1 if claimed else 0)),
-        ("SELECT SUGGESTED_FIX_SQL", FakeResult([(fix_sql,)])),
+        ("SELECT SUGGESTED_FIX_SQL", FakeResult([(fix_sql, incident_source)])),
         ("SELECT SOURCE_TYPE", FakeResult([("PIPELINE_FAILURE", 7)])),
         ("FROM PIPELINE_LOGS", FakeResult([pipeline_row] if pipeline_row else [])),
         ("FROM DATA_LINEAGE", FakeResult([("sales_clean", "finance_executive_bi")])),
@@ -193,3 +199,43 @@ def test_rejection_only_applies_to_incidents_still_awaiting_approval(wire) -> No
     sql, _ = engine.executed[0]
     assert "STATUS = 'REJECTED'" in sql
     assert "AND STATUS = 'AWAITING_APPROVAL'" in sql
+
+
+AGENT_FIX = "ACTION: rerun-export (agent source=nightly-export, job=export.sh)"
+
+
+def test_an_agent_fix_is_approved_and_audited_without_the_engine_running_anything(wire) -> None:
+    engine, executor = _engine(AGENT_FIX, incident_source="CLI_EVENT"), FakeExecutor()
+    wire(engine, executor)
+
+    success, detail = remediation.execute_remediation(9, approved_by="alice (U1)")
+
+    assert success
+    assert "rerun-export" in detail
+    assert executor.statements == []
+    assert engine.final_statuses() == []  # stays APPROVED until the agent reports back
+    (audit,) = engine.audit_rows()
+    assert (audit["outcome"], audit["executed_by"], audit["executed_sql"]) == ("APPROVED", "alice (U1)", AGENT_FIX)
+
+
+def test_an_action_marker_on_a_database_incident_is_treated_as_untrusted_sql_and_blocked(wire) -> None:
+    engine, executor = _engine(AGENT_FIX, incident_source="PIPELINE_FAILURE"), FakeExecutor()
+    wire(engine, executor)
+
+    success, detail = remediation.execute_remediation(7, approved_by="alice (U1)")
+
+    assert not success
+    assert "'ACTION'" in detail
+    assert executor.statements == []
+    assert engine.audit_rows()[0]["outcome"] == "BLOCKED"
+
+
+def test_an_agent_incident_with_no_fix_is_blocked_like_any_other_missing_fix(wire) -> None:
+    engine, executor = _engine(None, incident_source="CLI_EVENT"), FakeExecutor()
+    wire(engine, executor)
+
+    success, detail = remediation.execute_remediation(9, approved_by="alice (U1)")
+
+    assert not success
+    assert "No suggested fix" in detail
+    assert engine.audit_rows()[0]["outcome"] == "BLOCKED"
