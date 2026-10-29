@@ -4,6 +4,7 @@ import type { EventSink } from "./log.js";
 import { head, redact, tail } from "./redact.js";
 import { describeExit, runCommand } from "./runner.js";
 import { createProbe, jobLabel, type Probe } from "./sources.js";
+import { runWebhookSource } from "./webhook.js";
 
 const MAX_ERROR_CHARS = 3800;
 const MAX_JOB_CHARS = 200;
@@ -53,20 +54,32 @@ export async function checkSource(ctx: MonitorContext, source: Source, probe: Pr
   }
   state.failing = true;
   if (state.incident) return;
+  await reportFailure(ctx, source, state, result.error, result.exitCode);
+}
 
+/** Sends a failure to the engine and starts tracking the incident. Returns false, leaving no state, if the engine refused. */
+export async function reportFailure(
+  ctx: MonitorContext,
+  source: Source,
+  state: SourceState,
+  error: string,
+  exitCode: number | null,
+): Promise<boolean> {
   try {
     const incidentId = await ctx.engine.reportFailure({
       source: source.name,
       job: head(redact(jobLabel(source), ctx.secrets), MAX_JOB_CHARS),
-      error: tail(redact(result.error, ctx.secrets), MAX_ERROR_CHARS),
-      exit_code: result.exitCode,
+      error: tail(redact(error, ctx.secrets), MAX_ERROR_CHARS),
+      exit_code: exitCode,
       fix_id: source.fix?.id ?? null,
     });
     state.incident = { id: incidentId, reportedAt: ctx.now(), fixStarted: false };
-    ctx.log.record("reported", source.name, { incidentId, detail: result.error });
-  } catch (error) {
-    // The source stays unreported, so the next failing probe tries again.
-    ctx.log.record("warning", source.name, { detail: `could not report the failure, will retry: ${describe(error)}` });
+    ctx.log.record("reported", source.name, { incidentId, detail: error });
+    return true;
+  } catch (reportError) {
+    // The source stays unreported, so the next failure tries again.
+    ctx.log.record("warning", source.name, { detail: `could not report the failure, will retry: ${describe(reportError)}` });
+    return false;
   }
 }
 
@@ -188,7 +201,11 @@ async function sendResult(
 
 /** Runs every source until `signal` aborts. One source failing to run its check never stops the others. */
 export async function monitorSources(ctx: MonitorContext, signal: AbortSignal): Promise<void> {
-  await Promise.all(ctx.config.sources.map((source) => sourceLoop(ctx, source, signal)));
+  await Promise.all(
+    ctx.config.sources.map((source) =>
+      source.type === "webhook" ? runWebhookSource(ctx, source, signal) : sourceLoop(ctx, source, signal),
+    ),
+  );
 }
 
 async function sourceLoop(ctx: MonitorContext, source: Source, signal: AbortSignal): Promise<void> {
@@ -215,6 +232,7 @@ async function sourceLoop(ctx: MonitorContext, source: Source, signal: AbortSign
 export async function checkOnce(ctx: MonitorContext): Promise<string[]> {
   const failing: string[] = [];
   for (const source of ctx.config.sources) {
+    if (source.type === "webhook") continue; // pushed to us; there is nothing to check on demand
     const state = newState();
     try {
       await checkSource(ctx, source, createProbe(source, ctx.fetchImpl), state);

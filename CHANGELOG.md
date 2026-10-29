@@ -6,7 +6,8 @@ project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- `ops-sentinel-cli` (`cli/`): a zero-dependency TypeScript CLI that watches commands, log files and HTTP endpoints, reports failures to the engine, and runs a pre-approved fix from the client's own config once a person approves it. Commands: `init`, `check`, `watch`, `run`, `status`.
+- `ops-sentinel-cli` (`cli/`): an oclif CLI that bootstraps and runs Ops Sentinel. `sentinel init` scaffolds a project (config, generated API key and webhook secret in a 0600 `.env`, business context, Docker Compose for the engine and an optional local Ollama model); `up`/`down` manage the engine; `doctor` checks the setup; `watch`/`run`/`status` run the listeners. Listeners: command, log file, HTTP check and an authenticated webhook receiver. Failures are reported to the engine, and a pre-approved fix from the client's own config runs once a person approves it.
+- Engine: `LLM_PROVIDER=ollama` for a local small model, `BUSINESS_CONTEXT_FILE` injected into the triage prompt, `OPS_SENTINEL_WATCHER_ENABLED` to run for CLI incidents only, and a `Dockerfile`.
 - Engine endpoints `POST /api/events`, `GET /api/events/{id}` and `POST /api/events/{id}/result`, and `CLI_EVENT` incidents (`agent_events.py`, `agent_actions.py`).
 
 ### Security

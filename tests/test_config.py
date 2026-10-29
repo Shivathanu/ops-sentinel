@@ -41,3 +41,13 @@ def test_a_fully_configured_server_has_no_startup_warnings(monkeypatch: pytest.M
     monkeypatch.setattr(settings, "exasol_validate_certificate", True)
 
     assert security.startup_warnings() == []
+
+
+def test_startup_warns_about_a_missing_context_file_and_an_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "business_context_file", "/nonexistent/context.md")
+    monkeypatch.setattr(settings, "llm_provider", "gpt-five")
+
+    text = "\n".join(security.startup_warnings())
+
+    assert "BUSINESS_CONTEXT_FILE" in text
+    assert "LLM_PROVIDER" in text

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ConfigError, parseConfig } from "../src/config.js";
+import { ConfigError, parseConfig } from "../src/lib/config.js";
 
 const env = { OPS_SENTINEL_API_KEY: "key-123456" };
 const base = { engine: { url: "http://localhost:8000/" } };

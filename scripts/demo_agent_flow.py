@@ -1,7 +1,7 @@
 """
 Walks through the CLI-agent flow with the real pieces and no external services.
 
-REAL:      the engine's FastAPI routes (API-key auth, validation), the compiled CLI in cli/dist, and the job and
+REAL:      the engine's FastAPI routes (API-key auth, validation), the oclif CLI in cli/bin, and the job and
            fix commands, which really run as shell processes.
 SIMULATED: Exasol (an in-memory dict stands in), the LLM triage (canned text) and Slack (a printed card, and a
            "person" who clicks Approve after a few seconds).
@@ -28,7 +28,7 @@ import uvicorn  # noqa: E402
 from ops_sentinel import agent_actions, agent_events, main  # noqa: E402
 
 PORT = 8765
-CLI = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cli", "dist", "src", "index.js"))
+CLI = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cli", "bin", "run.js"))
 incidents: dict[int, dict] = {}
 
 
@@ -98,9 +98,15 @@ def approver() -> None:
 
 
 def main_demo() -> int:
-    if not os.path.exists(CLI):
+    if not os.path.exists(os.path.join(os.path.dirname(CLI), "..", "dist", "src", "commands", "run.js")):
         print("Build the CLI first: cd cli && npm install && npm run build")
         return 1
+    # Prime concurrent.futures' lazy atexit registration from the main thread: the first-ever
+    # asyncio.to_thread() call imports ThreadPoolExecutor and registers an atexit hook, which raises
+    # "can't register atexit after shutdown" (Python 3.13+ on Windows) if that first call happens from
+    # the daemon thread running the server below instead.
+    import concurrent.futures
+    concurrent.futures.ThreadPoolExecutor(max_workers=1).shutdown(wait=True)
     server = uvicorn.Server(uvicorn.Config(main.app, host="127.0.0.1", port=PORT, log_level="warning"))
     threading.Thread(target=server.run, daemon=True).start()
     while not server.started:
@@ -110,8 +116,28 @@ def main_demo() -> int:
     work = tempfile.mkdtemp(prefix="sentinel-demo-")
     lock = os.path.join(work, "export.lock")
     open(lock, "w").close()
-    job = f"sh -c 'test ! -f {lock} || {{ echo \"ExportError: partition locked by stale run (password=hunter2hunter2)\" >&2; exit 2; }}; echo export done'"
-    fix = f"rm -f {lock}"
+    # Node scripts rather than a `sh -c '...'` one-liner (cli/runner.ts spawns the job through the
+    # platform's default shell -- cmd.exe on Windows -- which can't parse POSIX syntax like `{ }` or `>&2`),
+    # matching the cross-platform pattern cli/examples/flaky-job.mjs already uses.
+    job_script = os.path.join(work, "job.mjs")
+    with open(job_script, "w") as f:
+        f.write(
+            "import { existsSync } from 'node:fs';\n"
+            "if (existsSync(process.argv[2])) {\n"
+            "  console.error('ExportError: partition locked by stale run (password=hunter2hunter2)');\n"
+            "  process.exit(2);\n"
+            "} else {\n"
+            "  console.log('export done');\n"
+            "}\n"
+        )
+    fix_script = os.path.join(work, "fix.mjs")
+    with open(fix_script, "w") as f:
+        f.write(
+            "import { existsSync, unlinkSync } from 'node:fs';\n"
+            "if (existsSync(process.argv[2])) unlinkSync(process.argv[2]);\n"
+        )
+    job = f'node "{job_script}" "{lock}"'
+    fix = f'node "{fix_script}" "{lock}"'
 
     step("1. The job fails")
     say("JOB", "nightly export is blocked by a stale lock file (its error even leaks a password)")

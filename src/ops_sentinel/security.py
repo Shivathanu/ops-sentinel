@@ -4,10 +4,12 @@ Slack interactions are authenticated separately by their request signature (see 
 """
 import hmac
 import logging
+from pathlib import Path
 
 from fastapi import Header, HTTPException
 
 from ops_sentinel.config import settings
+from ops_sentinel.triage_agent import PROVIDERS
 
 logger = logging.getLogger("ops_sentinel.security")
 
@@ -34,6 +36,10 @@ def startup_warnings() -> list[str]:
         warnings.append("SLACK_APPROVER_IDS is empty; nobody can approve or reject incidents.")
     if not settings.exasol_executor_user:
         warnings.append("EXASOL_EXECUTOR_USER is not set; approved remediations will fail until it is configured.")
+    if settings.business_context_file and not Path(settings.business_context_file).is_file():
+        warnings.append(f"BUSINESS_CONTEXT_FILE {settings.business_context_file!r} does not exist; triage will fail.")
+    if settings.llm_provider not in PROVIDERS:
+        warnings.append(f"LLM_PROVIDER {settings.llm_provider!r} is not one of {PROVIDERS}; triage will fail.")
     if not settings.exasol_validate_certificate:
         warnings.append("Exasol certificate validation is disabled; use this only with a local self-signed instance.")
     return warnings

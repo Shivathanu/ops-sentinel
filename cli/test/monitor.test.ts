@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { EngineError } from "../src/client.js";
-import { checkOnce, checkSource, monitorSources, newState, trackIncident } from "../src/monitor.js";
-import { createProbe } from "../src/sources.js";
+import { EngineError } from "../src/lib/client.js";
+import { checkOnce, checkSource, monitorSources, newState, trackIncident } from "../src/lib/monitor.js";
+import { createProbe } from "../src/lib/sources.js";
 import { API_KEY, CapturedEvents, FakeEngine, makeConfig, makeContext, nodeCommand, tempDir } from "./helpers.js";
 
 interface Rig {

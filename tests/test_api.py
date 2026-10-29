@@ -144,3 +144,33 @@ def test_unknown_slack_action_is_a_bad_request(remediation_calls: list[tuple]) -
 def test_malformed_slack_payload_is_a_bad_request(remediation_calls: list[tuple]) -> None:
     assert _slack_post(payload={"user": {"id": APPROVER}}).status_code == 400
     assert remediation_calls == []
+
+
+def test_the_watcher_is_not_started_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[bool] = []
+
+    async def fake_watch_loop() -> None:
+        started.append(True)
+
+    monkeypatch.setattr(main, "watch_loop", fake_watch_loop)
+    monkeypatch.setattr(main.settings, "watcher_enabled", False)
+
+    with TestClient(main.app):
+        pass
+
+    assert started == []
+
+
+def test_the_watcher_is_started_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[bool] = []
+
+    async def fake_watch_loop() -> None:
+        started.append(True)
+
+    monkeypatch.setattr(main, "watch_loop", fake_watch_loop)
+    monkeypatch.setattr(main.settings, "watcher_enabled", True)
+
+    with TestClient(main.app):
+        pass
+
+    assert started == [True]

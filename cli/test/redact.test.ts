@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { head, redact, tail } from "../src/redact.js";
+import { head, redact, tail } from "../src/lib/redact.js";
 
 test("redacts common credential shapes", () => {
   const cases: Array<[string, string]> = [

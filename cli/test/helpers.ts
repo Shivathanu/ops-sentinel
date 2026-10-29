@@ -3,10 +3,10 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Engine, FailureReport, IncidentStatus, ResultReport } from "../src/client.js";
-import { parseConfig, type Config } from "../src/config.js";
-import type { EventFields, EventSink, EventType } from "../src/log.js";
-import type { MonitorContext } from "../src/monitor.js";
+import type { Engine, FailureReport, IncidentStatus, ResultReport } from "../src/lib/client.js";
+import { parseConfig, type Config } from "../src/lib/config.js";
+import type { EventFields, EventSink, EventType } from "../src/lib/log.js";
+import type { MonitorContext } from "../src/lib/monitor.js";
 
 export const API_KEY = "test-engine-key-123";
 const NODE = JSON.stringify(process.execPath);

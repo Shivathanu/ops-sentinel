@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { EngineClient, EngineError } from "../src/client.js";
+import { EngineClient, EngineError } from "../src/lib/client.js";
 import { API_KEY, FakeEngineServer } from "./helpers.js";
 
 const server = new FakeEngineServer();

@@ -42,13 +42,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.warning(warning)
     # Keep a reference: the event loop only holds weak references to tasks, so an unreferenced watcher can be
     # garbage-collected mid-run.
-    watcher = asyncio.create_task(watch_loop())
+    watcher = asyncio.create_task(watch_loop()) if settings.watcher_enabled else None
+    if watcher is None:
+        logger.info("database watcher disabled (OPS_SENTINEL_WATCHER_ENABLED=false); serving agent incidents only")
     try:
         yield
     finally:
-        watcher.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await watcher
+        if watcher is not None:
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
 
 
 app = FastAPI(title="Ops Sentinel Engine", lifespan=lifespan)

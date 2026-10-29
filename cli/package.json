@@ -1,14 +1,14 @@
 {
   "name": "ops-sentinel-cli",
-  "version": "0.1.0",
-  "description": "Watches your own automation (jobs, log files, HTTP endpoints), reports failures to an Ops Sentinel engine, and runs a pre-approved fix only after a named person approves it.",
+  "version": "0.2.0",
+  "description": "Bootstraps and runs Ops Sentinel: scaffolds an incident-management project, starts the engine, and watches your automation with listeners that report failures for human-approved remediation.",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
-    "sentinel": "dist/src/index.js",
-    "ops-sentinel": "dist/src/index.js"
+    "sentinel": "bin/run.js"
   },
   "files": [
+    "bin",
     "dist/src",
     "!dist/src/**/*.map",
     "examples",
@@ -16,7 +16,19 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18.17"
+    "node": ">=22"
+  },
+  "oclif": {
+    "bin": "sentinel",
+    "dirname": "sentinel",
+    "commands": {
+      "strategy": "pattern",
+      "target": "./dist/src/commands"
+    },
+    "plugins": [
+      "@oclif/plugin-help"
+    ],
+    "topicSeparator": " "
   },
   "scripts": {
     "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
@@ -25,6 +37,7 @@
     "prepublishOnly": "npm test"
   },
   "keywords": [
+    "oclif",
     "incident-response",
     "automation",
     "ops",
@@ -32,8 +45,13 @@
     "approval",
     "cli"
   ],
+  "dependencies": {
+    "@oclif/core": "^4.0.0",
+    "@oclif/plugin-help": "^6.2.0"
+  },
   "devDependencies": {
-    "@types/node": "^20.14.0",
+    "@oclif/test": "^4.1.0",
+    "@types/node": "^22.0.0",
     "typescript": "^5.5.0"
   }
 }

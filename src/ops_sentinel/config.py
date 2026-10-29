@@ -5,12 +5,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # LLM
+    # LLM: "openai", "anthropic", or "ollama" for a local small model served by Ollama
     llm_provider: str = "openai"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5"
+    ollama_base_url: str = "http://localhost:11434/v1"  # Ollama's OpenAI-compatible endpoint
+    ollama_model: str = "llama3.2"
+
+    # Optional file describing the business (critical processes, owners, what must never be touched). It is added
+    # to every triage prompt so the model can phrase impact in the operator's own terms.
+    business_context_file: str = ""
 
     # Slack
     slack_bot_token: str = ""
@@ -56,6 +62,9 @@ class Settings(BaseSettings):
 
     # Comma-separated Slack user IDs (for example U012ABCDEF) allowed to approve or reject. Empty means nobody.
     slack_approver_ids: str = ""
+
+    # Set false to run the engine for agent-reported incidents only, with no polling of PIPELINE_LOGS/QUERY_METRICS.
+    watcher_enabled: bool = Field(default=True, validation_alias="OPS_SENTINEL_WATCHER_ENABLED")
 
     # Watcher
     watch_interval_seconds: int = 10

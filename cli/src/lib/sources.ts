@@ -24,6 +24,9 @@ export function createProbe(source: Source, fetchImpl: typeof fetch = fetch): Pr
       return fileProbe(source);
     case "http":
       return httpProbe(source, fetchImpl);
+    case "webhook":
+      // A webhook is pushed to us, so there is nothing to poll; webhook.ts handles it.
+      throw new Error(`source '${source.name}' is a webhook and has no probe`);
   }
 }
 
@@ -106,5 +109,7 @@ export function jobLabel(source: Source): string {
       return `log file ${source.path}`;
     case "http":
       return `GET ${source.url}`;
+    case "webhook":
+      return `webhook ${source.path}`;
   }
 }

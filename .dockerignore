@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+.env
+.sentinel
+**/__pycache__
+**/node_modules
+cli
+tests
+docs
+scripts
+dashboard
+*.log

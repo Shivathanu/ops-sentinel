@@ -50,7 +50,16 @@ export interface HttpSource extends SourceBase {
   timeoutSeconds: number;
 }
 
-export type Source = CommandSource | FileSource | HttpSource;
+export interface WebhookSource extends SourceBase {
+  type: "webhook";
+  host: string;
+  port: number;
+  path: string;
+  /** Shared secret senders must present; resolved from the environment, never stored in the config file. */
+  secret: string;
+}
+
+export type Source = CommandSource | FileSource | HttpSource | WebhookSource;
 
 export interface Config {
   baseDir: string;
@@ -71,6 +80,7 @@ export interface ParseOptions {
 export const NAME_PATTERN = /^[A-Za-z0-9_.-]{1,100}$/;
 export const FIX_ID_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+export const DEFAULT_WEBHOOK_SECRET_ENV = "SENTINEL_WEBHOOK_SECRET";
 
 type Obj = Record<string, unknown>;
 
@@ -144,7 +154,7 @@ export function parseConfig(raw: unknown, options: ParseOptions): Config {
         if (seen.has(rawName)) problems.push(`source name '${rawName}' is used more than once`);
         seen.add(rawName);
       }
-      const source = parseSource(entry, index, options.baseDir, problems);
+      const source = parseSource(entry, index, options.baseDir, options.env, problems);
       if (source) sources.push(source);
     });
     if (options.requireSources && rawSources.length === 0) problems.push("config.sources needs at least one source");
@@ -192,7 +202,13 @@ function parseEngine(
   return url !== undefined && apiKey ? { url, apiKey } : undefined;
 }
 
-function parseSource(entry: unknown, index: number, baseDir: string, problems: string[]): Source | undefined {
+function parseSource(
+  entry: unknown,
+  index: number,
+  baseDir: string,
+  env: NodeJS.ProcessEnv,
+  problems: string[],
+): Source | undefined {
   const where = `sources[${index}]`;
   if (!isObj(entry)) {
     problems.push(`${where} must be an object`);
@@ -239,7 +255,22 @@ function parseSource(entry: unknown, index: number, baseDir: string, problems: s
     if (name === undefined || url === undefined) return undefined;
     return { type, name: label, cwd, intervalSeconds, timeoutSeconds, url, expectStatus, ...(fix && { fix }) };
   }
-  if (type !== undefined) problems.push(`${where}.type '${type}' is not one of: command, file, http`);
+  if (type === "webhook") {
+    const host = reader.string("host") ?? "127.0.0.1";
+    const port = reader.int("port", 8787, 1, 65_535);
+    const hookPath = reader.string("path") ?? "/event";
+    const secretEnv = reader.string("secretEnv") ?? DEFAULT_WEBHOOK_SECRET_ENV;
+    if (!hookPath.startsWith("/")) problems.push(`${where}.path must start with '/'`);
+    const secret = env[secretEnv];
+    if (!secret) {
+      problems.push(`environment variable ${secretEnv} (the webhook secret for '${label}') is not set`);
+    } else if (secret.length < 16) {
+      problems.push(`environment variable ${secretEnv} must be at least 16 characters`);
+    }
+    if (name === undefined || !secret || secret.length < 16) return undefined;
+    return { type, name: label, cwd, intervalSeconds: 1, host, port, path: hookPath, secret, ...(fix && { fix }) };
+  }
+  if (type !== undefined) problems.push(`${where}.type '${type}' is not one of: command, file, http, webhook`);
   return undefined;
 }
 

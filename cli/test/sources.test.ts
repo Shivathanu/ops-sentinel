@@ -4,8 +4,8 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { test } from "node:test";
-import type { CommandSource, FileSource, HttpSource } from "../src/config.js";
-import { createProbe } from "../src/sources.js";
+import type { CommandSource, FileSource, HttpSource } from "../src/lib/config.js";
+import { createProbe } from "../src/lib/sources.js";
 import { nodeCommand, tempDir } from "./helpers.js";
 
 function commandSource(run: string, timeoutSeconds = 20): CommandSource {

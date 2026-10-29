@@ -1,7 +1,9 @@
 # ops-sentinel-cli
 
-A small agent that watches your own automation, reports failures to an [Ops Sentinel](../README.md) engine, and
-runs a **pre-approved fix** only after a named person approves it in Slack.
+Bootstraps and runs [Ops Sentinel](../README.md). One install sets up an incident-management project on your machine:
+the engine (Docker Compose), a triage model (hosted key or a local model via Ollama), your business context, and
+listeners that watch your own automation. A failure is triaged, a person approves in Slack, and only then does a
+**pre-approved fix** run.
 
 It runs next to your jobs, as a sidecar or a wrapper. Nothing needs to be installed inside the jobs themselves.
 
@@ -31,16 +33,27 @@ npm install -g ops-sentinel-cli     # after it is published; until then: cd cli 
 sentinel --help
 ```
 
-Needs Node 18.17 or newer. No runtime dependencies.
+Needs Node 22 or newer. `sentinel up` also needs Docker with Compose.
 
 ## Quick start
 
 ```bash
-export OPS_SENTINEL_API_KEY=...            # the engine's key; only ever read from the environment
-sentinel init                              # writes sentinel.config.json
-sentinel check                             # validates it and pings the engine
-sentinel watch                             # watches every source until stopped
+mkdir my-ops && cd my-ops
+sentinel init                # asks for model provider and listeners; writes config, .env, compose file
+$EDITOR .env                 # add the model key (not needed for ollama), Slack token, approver ids, Exasol password
+sentinel doctor              # checks the setup
+sentinel up                  # starts the engine (and Ollama, pulling the model, if chosen)
+sentinel watch               # runs the listeners until stopped
 ```
+
+`sentinel init` writes: `sentinel.config.json`, `.env` (owner-only, with a generated API key and webhook secret),
+`business-context.md` (read by the triage model with every incident), `docker-compose.yml`, `.gitignore` and a README.
+It never overwrites existing files without `--force`. For scripts: `sentinel init --yes --provider ollama --listener command --listener webhook`.
+
+The engine image is `ops-sentinel:latest`. Build it from the engine repo with `docker build -t ops-sentinel .`, or pass
+`--engine-build <path-to-repo>` to `init` so Compose builds it. The engine needs an Exasol instance; the generated
+`.env` points at one on the host (`host.docker.internal`). Commands read `.env` from `--dir` (default: the current
+directory); real environment variables win over it.
 
 Try it without any real job: `examples/demo.config.json` watches a job that fails until its approved fix runs.
 
@@ -91,6 +104,12 @@ set `SENTINEL_ENGINE_URL` and `OPS_SENTINEL_API_KEY`.
 | `command` | the command exits non-zero or exceeds `timeoutSeconds` | every 300 s, 120 s timeout |
 | `file` | a new line matches the regular expression `match` (the file is followed from its end; rotation is handled) | every 5 s |
 | `http` | the request fails or returns a status not in `expectStatus` | every 60 s, 10 s timeout, status 200 |
+| `webhook` | another tool POSTs an alert (CI, status page, monitor); each new `key`/`id`/`fingerprint`/`alert_id` is one incident | `127.0.0.1:8787/event`, secret from `SENTINEL_WEBHOOK_SECRET` |
+
+The webhook listener answers 202 only after the engine accepted the incident (502 otherwise, so senders can retry), requires
+the secret as `X-Sentinel-Secret` or `Authorization: Bearer` (at least 16 characters, from the environment), caps bodies
+at 64 KB, and ignores repeats of a key while its incident is open. It binds to localhost by default; put TLS in front
+before exposing it.
 
 A `fix` is optional. Without one, the incident is still reported and triaged, but there is nothing to approve.
 `maxAttempts` retries a failing fix with a growing delay before the result is reported as failed. `cwd` can be set on
@@ -103,13 +122,14 @@ request; set `engine.allowInsecureHttp` to accept plain http elsewhere.
 
 | Command | Purpose |
 | --- | --- |
-| `sentinel init [--force]` | write a sample config |
-| `sentinel check [-c file] [--offline]` | validate the config, ping the engine |
+| `sentinel init [--yes] [--force] [--provider p] [--listener l]...` | scaffold a project |
+| `sentinel up` / `sentinel down` | start or stop the engine with Docker Compose |
+| `sentinel doctor [--offline]` | check env, config, Docker, Ollama and engine reachability |
 | `sentinel watch [-c file] [--once]` | watch all sources; `--once` checks once and exits 1 if any fail (for cron) |
 | `sentinel run [options] -- <command>` | run one command and report it if it fails |
 | `sentinel status [-n 20] [--json]` | recent events from the local log |
 
-Exit codes: 0 success, 1 a monitored thing failed or the engine was unreachable for `check`, 2 usage or config error.
+Exit codes: 0 success, 1 a monitored thing failed or `doctor` found a problem, 2 usage or config error.
 
 ## What happens to an incident
 
