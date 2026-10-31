@@ -177,7 +177,7 @@ engine/             Python engine (pyproject.toml, Dockerfile); import name `sen
 cli/                ops-sentinel-cli: TypeScript runner that watches commands, logs and endpoints (npm)
 deploy/compose/     docker compose for api + worker (optional local Exasol)
 examples/           example workspace spec
-sql/                schema and roles for the demo pipeline tables
+sql/                SENTINEL schema (demo pipeline data, watcher tables) and the database users and grants
 docs/               run guide, deployment, design, pitch deck
 ```
 
