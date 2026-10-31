@@ -22,9 +22,16 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from slack_sdk.signature import SignatureVerifier
 
 from ops_sentinel import agent_events
+from ops_sentinel.api.v1 import router as v1_router
 from ops_sentinel.config import settings
+from ops_sentinel.platform import get_platform
 from ops_sentinel.remediation import execute_remediation, reject_incident
-from ops_sentinel.scoring import compute_efficiency_score, compute_trust_score, incident_timeline, recent_incidents
+from ops_sentinel.scoring import (
+    compute_efficiency_score,
+    compute_trust_score,
+    incident_timeline,
+    recent_incidents,
+)
 from ops_sentinel.security import require_api_key, startup_warnings
 from ops_sentinel.slack_notifier import update_incident_card
 from ops_sentinel.watcher import watch_loop
@@ -36,10 +43,29 @@ APPROVE_ACTION = "approve_incident"
 REJECT_ACTION = "reject_incident"
 
 
+def _start_platform() -> None:
+    """With a workspace spec configured: migrate the platform schema (if enabled), validate plugins, record specs.
+    A failure here stops the process, so an orchestrator restarts it instead of serving a half-configured engine."""
+    platform = get_platform()
+    if platform is None:
+        logger.info("no workspace spec (OPS_SENTINEL_SPEC_FILE); serving the v1 /api endpoints only")
+        return
+    if settings.auto_migrate:
+        from ops_sentinel.store.migrate import migrate_from_settings
+
+        migrate_from_settings()
+    problems = platform.validate()
+    if problems:
+        raise RuntimeError("invalid workspace configuration:\n  - " + "\n  - ".join(problems))
+    platform.sync_workspaces()
+    logger.info("platform ready: workspaces %s", ", ".join(platform.workspaces.names()))
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     for warning in startup_warnings():
         logger.warning(warning)
+    await asyncio.to_thread(_start_platform)
     # Keep a reference: the event loop only holds weak references to tasks, so an unreferenced watcher can be
     # garbage-collected mid-run.
     watcher = asyncio.create_task(watch_loop()) if settings.watcher_enabled else None
@@ -55,6 +81,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Ops Sentinel Engine", lifespan=lifespan)
+app.include_router(v1_router)
 
 # Slack isn't required for the detect/investigate part of the loop, only for the approval step. Disable that
 # one endpoint instead of crashing the engine when Slack hasn't been configured yet.
@@ -172,9 +199,9 @@ def _parse_slack_action(body: bytes) -> SlackAction:
 def _process_approval(action: SlackAction) -> None:
     try:
         success, detail = execute_remediation(action.incident_id, approved_by=action.actor)
-        icon = "✅" if success else "⚠️"
+        icon = "âœ…" if success else "âš ï¸"
         update_incident_card(
-            action.message_ts, f"{icon} Incident #{action.incident_id} — {detail} (approved by @{action.username})"
+            action.message_ts, f"{icon} Incident #{action.incident_id} â€” {detail} (approved by @{action.username})"
         )
     except Exception:
         # Runs after the response was sent, so log instead of raising into nowhere.
@@ -184,6 +211,6 @@ def _process_approval(action: SlackAction) -> None:
 def _process_rejection(action: SlackAction) -> None:
     try:
         reject_incident(action.incident_id)
-        update_incident_card(action.message_ts, f"❌ Incident #{action.incident_id} rejected by @{action.username}")
+        update_incident_card(action.message_ts, f"âŒ Incident #{action.incident_id} rejected by @{action.username}")
     except Exception:
         logger.exception("rejection processing failed for incident #%s", action.incident_id)

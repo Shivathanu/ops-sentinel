@@ -55,9 +55,11 @@ class ExasolConnectionPool:
     handler at a time.
     """
 
-    def __init__(self, max_size: int, credentials: ExasolCredentials):
+    def __init__(self, max_size: int, credentials: ExasolCredentials, schema: str | None = None):
         self._max_size = max_size
         self._credentials = credentials
+        # None means the v1 schema; "" opens no schema (the migrator connects before the platform schema exists).
+        self._schema = settings.exasol_schema if schema is None else schema
         self._idle: queue.Queue[pyexasol.ExaConnection] = queue.Queue()
         self._created = 0
         self._lock = threading.Lock()
@@ -71,7 +73,7 @@ class ExasolConnectionPool:
             dsn=f"{settings.exasol_admin_host}:{settings.exasol_admin_port}",
             user=self._credentials.user,
             password=self._credentials.password,
-            schema=settings.exasol_schema,
+            schema=self._schema,
             websocket_sslopt=_ssl_options(),
         )
 

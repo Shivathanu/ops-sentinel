@@ -33,7 +33,13 @@ dependencies = [
     "python-dotenv==1.0.*",
     "openai==1.*",
     "anthropic<1",
+    "pyyaml>=6.0,<7",
 ]
+
+[project.scripts]
+sentinel-migrate = "ops_sentinel.store.migrate:main"
+sentinel-worker = "ops_sentinel.workers.worker:main"
+sentinel-validate = "ops_sentinel.core.validate:main"
 
 [project.optional-dependencies]
 dashboard = [
@@ -52,10 +58,11 @@ version = { attr = "ops_sentinel.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-ops_sentinel = ["py.typed"]
+ops_sentinel = ["py.typed", "store/migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra --strict-markers"
 xfail_strict = true
 

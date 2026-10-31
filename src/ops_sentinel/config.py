@@ -66,6 +66,20 @@ class Settings(BaseSettings):
     # Set false to run the engine for agent-reported incidents only, with no polling of PIPELINE_LOGS/QUERY_METRICS.
     watcher_enabled: bool = Field(default=True, validation_alias="OPS_SENTINEL_WATCHER_ENABLED")
 
+    # Platform (v2). Platform tables live in their own schema so the v1 SENTINEL schema, which also holds the demo
+    # business tables, is never touched by migrations.
+    platform_schema: str = Field(default="OPS_SENTINEL", validation_alias="OPS_SENTINEL_PLATFORM_SCHEMA")
+    # Optional schema owner used only to apply migrations and install UDFs; falls back to EXASOL_ADMIN_* when unset.
+    exasol_migrator_user: str = ""
+    exasol_migrator_password: str = ""
+    # Path to the workspace spec (sentinel.yaml). Empty means no spec: v1 behaviour only.
+    spec_file: str = Field(default="", validation_alias="OPS_SENTINEL_SPEC_FILE")
+    # Apply pending platform migrations and reinstall UDFs when the api starts. Safe with several replicas; turn off
+    # where migrations run as a separate step (the Helm pre-upgrade Job).
+    auto_migrate: bool = Field(default=True, validation_alias="OPS_SENTINEL_AUTO_MIGRATE")
+    worker_poll_seconds: float = Field(default=2.0, validation_alias="OPS_SENTINEL_WORKER_POLL_SECONDS")
+    worker_lease_seconds: int = Field(default=300, validation_alias="OPS_SENTINEL_WORKER_LEASE_SECONDS")
+
     # Watcher
     watch_interval_seconds: int = 10
     cost_spike_threshold_usd: float = 5.0
