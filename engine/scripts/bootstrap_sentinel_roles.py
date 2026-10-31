@@ -16,11 +16,26 @@ Users (see docs/design/ai-sre-platform.md, "Exasol as the system of record"):
 Idempotent: existing users are kept (their passwords too, unless --reset-passwords), and existing grants are fine.
 Passwords are generated per run and printed once; nothing is stored in this repository.
 """
-import argparse
 import os
-import secrets
 import sys
 from pathlib import Path
+
+
+def _use_project_venv() -> None:
+    """Re-run with the repo virtualenv when `python3` is the system interpreter.
+
+    The venv `python` is a symlink to the same binary, so compare prefixes rather than resolved paths.
+    """
+    venv_root = Path(__file__).resolve().parents[2] / ".venv"
+    venv_python = venv_root / "bin" / "python"
+    if venv_python.is_file() and Path(sys.prefix).resolve() != venv_root.resolve():
+        os.execv(venv_python, [str(venv_python), *sys.argv])
+
+
+_use_project_venv()
+
+import argparse
+import secrets
 
 import pyexasol
 from dotenv import load_dotenv
@@ -56,6 +71,7 @@ def dba_credentials() -> tuple[str | None, str]:
 
 def write_env(path: Path, values: dict[str, str]) -> None:
     """Sets keys in a .env file, replacing existing lines for them and appending the rest; other lines are kept."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     remaining = dict(values)
     for index, line in enumerate(lines):

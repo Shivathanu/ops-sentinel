@@ -2,6 +2,7 @@ import pytest
 
 from sentinel import security
 from sentinel.config import settings
+from sentinel.slack_notifier import post_incident_card, posting_token_error
 
 
 @pytest.mark.parametrize(
@@ -51,3 +52,22 @@ def test_startup_warns_about_a_missing_context_file_and_an_unknown_provider(monk
 
     assert "BUSINESS_CONTEXT_FILE" in text
     assert "LLM_PROVIDER" in text
+
+
+def test_an_app_level_slack_token_cannot_post() -> None:
+    reason = posting_token_error("xapp-1-example")
+
+    assert reason is not None
+    assert "xoxb-" in reason
+    assert "not_allowed_token_type" in reason
+
+
+def test_a_bot_token_is_accepted_for_posting() -> None:
+    assert posting_token_error("xoxb-example") is None
+
+
+def test_posting_refuses_an_app_level_token_before_calling_slack(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "slack_bot_token", "xapp-1-example")
+
+    with pytest.raises(RuntimeError, match="xoxb-"):
+        post_incident_card(1, "PIPELINE_FAILURE", "impact", "cause", "SELECT 1", "LOW")

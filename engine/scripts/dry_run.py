@@ -20,10 +20,10 @@ What's REAL vs. SIMULATED in this run, and why:
                             for real); otherwise a clearly labeled canned
                             response so the flow still completes.
 
-  Slack notification         REAL if SLACK_BOT_TOKEN + SLACK_CHANNEL_ID are
-                            set in .env (calls sentinel.slack_notifier for
-                            real, posts an actual message); otherwise the
-                            Block Kit card is rendered as text here instead.
+  Slack notification         REAL if SLACK_BOT_TOKEN is a bot token (xoxb-) and
+                            SLACK_CHANNEL_ID is set (calls sentinel.slack_notifier
+                            for real). An app-level token (xapp-) cannot post, so
+                            the card is rendered as text and the run continues.
 
   Remediation guardrail       REAL, always -> imports validate_fix_sql
                             straight from sentinel/guardrail.py, so this run
@@ -46,6 +46,7 @@ load_dotenv()
 
 from sentinel.config import settings  # noqa: E402
 from sentinel.guardrail import validate_fix_sql  # noqa: E402 — the real guardrail, reused as-is
+from sentinel.slack_notifier import posting_token_error  # noqa: E402
 
 SEP = "-" * 78
 
@@ -160,32 +161,54 @@ def step_4_triage(error_context: dict, lineage: list[dict]) -> dict:
     return result
 
 
+def _render_card(incident_id: int, triage_result: dict) -> None:
+    print(textwrap.dedent(f"""
+        +---------------------------------------------------------------+
+        | Incident #{incident_id} -- PIPELINE_FAILURE
+        | Business impact: {triage_result['business_impact']}
+        | Root cause:      {triage_result['root_cause']}
+        | Suggested fix:   {triage_result['suggested_fix_sql']}
+        | Risk level:      {triage_result['risk_level']}
+        | [ Approve & Remediate ]   [ Reject ]
+        +---------------------------------------------------------------+
+    """))
+
+
 def step_5a_notify(incident_id: int, triage_result: dict) -> None:
     banner("STEP 5 (part 1)", "Post the interactive Approve / Reject card")
-    has_slack = bool(settings.slack_bot_token and settings.slack_channel_id)
-    if has_slack:
-        print("  Slack credentials found in .env -> posting a REAL card")
-        from sentinel.slack_notifier import post_incident_card
-        post_incident_card(
-            incident_id=incident_id,
-            source_type="PIPELINE_FAILURE",
-            business_impact=triage_result["business_impact"],
-            root_cause=triage_result["root_cause"],
-            suggested_fix_sql=triage_result["suggested_fix_sql"],
-            risk_level=triage_result["risk_level"],
-        )
+    token_problem = posting_token_error(settings.slack_bot_token) if settings.slack_bot_token else None
+    if settings.slack_bot_token and settings.slack_channel_id and token_problem is None:
+        print("  Slack bot token found in .env -> posting a REAL card")
+        try:
+            from sentinel.slack_notifier import post_incident_card
+            post_incident_card(
+                incident_id=incident_id,
+                source_type="PIPELINE_FAILURE",
+                business_impact=triage_result["business_impact"],
+                root_cause=triage_result["root_cause"],
+                suggested_fix_sql=triage_result["suggested_fix_sql"],
+                risk_level=triage_result["risk_level"],
+            )
+        except Exception as exc:  # noqa: BLE001 — a rejected post must not abort the rest of the demo
+            print(f"  Slack post failed: {exc}")
+            print("  Rendering the card as text so the rest of the dry run can finish.")
+            _render_card(incident_id, triage_result)
+        else:
+            print("  Posted.")
+        return
+
+    if token_problem:
+        print(f"  {token_problem}")
+        print("  Rendering the card as text instead of posting it.")
     else:
         print("  No Slack credentials in .env -> rendering the card as text instead of posting it")
-        print(textwrap.dedent(f"""
-            +---------------------------------------------------------------+
-            | Incident #{incident_id} -- PIPELINE_FAILURE
-            | Business impact: {triage_result['business_impact']}
-            | Root cause:      {triage_result['root_cause']}
-            | Suggested fix:   {triage_result['suggested_fix_sql']}
-            | Risk level:      {triage_result['risk_level']}
-            | [ Approve & Remediate ]   [ Reject ]
-            +---------------------------------------------------------------+
-        """))
+    channel = settings.slack_channel_id
+    if channel and not channel.startswith(("C", "G", "D")):
+        print(
+            f"  SLACK_CHANNEL_ID is {channel!r}. chat.postMessage wants a channel id "
+            "such as C0123456789 (channel details), not the channel name."
+        )
+    _render_card(incident_id, triage_result)
 
 
 def step_5b_safety_check(bad_examples: list[str]) -> None:

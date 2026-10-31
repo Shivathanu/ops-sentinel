@@ -1,5 +1,5 @@
 -- Ops Sentinel schema
--- Run with: exapump sql -p starter-kit -f sql/schema.sql
+-- Run with: exapump sql -p starter-kit < sql/schema.sql
 
 CREATE SCHEMA IF NOT EXISTS SENTINEL;
 OPEN SCHEMA SENTINEL;

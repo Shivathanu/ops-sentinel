@@ -10,7 +10,7 @@ dict), not positional `?` placeholders.
 """
 import os
 import ssl
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pyexasol
 from dotenv import load_dotenv
@@ -22,6 +22,11 @@ PORT = os.getenv("EXASOL_ADMIN_PORT", "8563")
 USER = os.getenv("EXASOL_ADMIN_USER", "sys")
 PASSWORD = os.getenv("EXASOL_ADMIN_PASSWORD", "")
 SCHEMA = os.getenv("EXASOL_SCHEMA", "SENTINEL")
+
+
+def utc_now() -> datetime:
+    # Exasol TIMESTAMP has no time zone, so the offset must be stripped after reading UTC.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 conn = pyexasol.connect(
     dsn=f"{HOST}:{PORT}", user=USER, password=PASSWORD, schema=SCHEMA,
@@ -39,7 +44,7 @@ conn.execute(
         "pipeline_name": "Sales Clean To Finance Bi",
         "source": "sales_clean",
         "target": "finance_executive_bi",
-        "ts": datetime.utcnow(),
+        "ts": utc_now(),
         "status": "FAILED",
         "duration": 12.4,
         "rows_processed": 0,
@@ -63,7 +68,7 @@ conn.execute(
             "SELECT * FROM finance_executive_bi f JOIN sales_clean s "
             "ON f.order_id = s.order_id"
         ),
-        "ts": datetime.utcnow(),
+        "ts": utc_now(),
         "compute_ms": 95000.0,
         "cpu_seconds": 95.0,
         "rows_scanned": 48000000,

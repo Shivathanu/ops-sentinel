@@ -10,7 +10,6 @@ name: ops-sentinel
 
 x-engine: &engine
   image: ${OPS_SENTINEL_IMAGE:-ops-sentinel:latest}
-  build: ../../engine
   env_file: .env
   environment:
     OPS_SENTINEL_SPEC_FILE: /app/config/sentinel.yaml
@@ -27,6 +26,7 @@ x-engine: &engine
 services:
   api:
     <<: *engine
+    build: ../../engine
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
