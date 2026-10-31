@@ -57,3 +57,31 @@ def recent_incidents(limit: int = 20) -> list[dict]:
         ).fetchall()
     cols = ["incident_id", "source_type", "status", "business_impact", "risk_level", "created_ts"]
     return [dict(zip(cols, r, strict=True)) for r in rows]
+
+
+def incident_timeline(incident_id: int) -> dict | None:
+    """The full lifecycle of one incident: its row from INCIDENTS plus every
+    remediation attempt against it, oldest first, for a per-incident timeline view."""
+    with get_connection() as conn:
+        incident_row = conn.execute(
+            "SELECT INCIDENT_ID, SOURCE_TYPE, STATUS, BUSINESS_IMPACT, ROOT_CAUSE, SUGGESTED_FIX_SQL, "
+            "RISK_LEVEL, CREATED_TS, RESOLVED_TS FROM INCIDENTS WHERE INCIDENT_ID = {incident_id!d}",
+            {"incident_id": incident_id},
+        ).fetchone()
+        if incident_row is None:
+            return None
+        action_rows = conn.execute(
+            "SELECT ACTION_ID, EXECUTED_SQL, EXECUTED_BY, EXECUTED_TS, OUTCOME, OUTCOME_DETAIL "
+            "FROM REMEDIATION_ACTIONS WHERE INCIDENT_ID = {incident_id!d} ORDER BY EXECUTED_TS ASC",
+            {"incident_id": incident_id},
+        ).fetchall()
+
+    incident_cols = [
+        "incident_id", "source_type", "status", "business_impact", "root_cause",
+        "suggested_fix_sql", "risk_level", "created_ts", "resolved_ts",
+    ]
+    action_cols = ["action_id", "executed_sql", "executed_by", "executed_ts", "outcome", "outcome_detail"]
+    return {
+        "incident": dict(zip(incident_cols, incident_row, strict=True)),
+        "actions": [dict(zip(action_cols, r, strict=True)) for r in action_rows],
+    }

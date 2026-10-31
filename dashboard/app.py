@@ -24,6 +24,43 @@ def fetch(path: str) -> dict:
         return response.json()
 
 
+STATUS_ICON = {
+    "DETECTED": "🔎",
+    "TRIAGED": "🧠",
+    "AWAITING_APPROVAL": "⏳",
+    "APPROVED": "✅",
+    "REJECTED": "🚫",
+    "REMEDIATED": "🛠️",
+    "FAILED": "❌",
+}
+
+
+def render_timeline(data: dict) -> None:
+    """Renders one incident's lifecycle as a vertical timeline: detection, each
+    remediation attempt in order, then resolution — built from INCIDENTS /
+    REMEDIATION_ACTIONS timestamps rather than a separate event log."""
+    incident = data["incident"]
+    st.markdown(f"**Incident #{incident['incident_id']}** — {incident['source_type']}, risk: {incident['risk_level']}")
+
+    st.markdown(f"{STATUS_ICON.get('DETECTED', '•')} **{incident['created_ts']}** — Detected")
+    if incident["business_impact"]:
+        st.caption(f"Impact: {incident['business_impact']}")
+    if incident["root_cause"]:
+        st.caption(f"Root cause: {incident['root_cause']}")
+
+    for action in data["actions"]:
+        icon = STATUS_ICON.get(action["outcome"], "•")
+        st.markdown(f"{icon} **{action['executed_ts']}** — Remediation by {action['executed_by']}: {action['outcome']}")
+        if action["outcome_detail"]:
+            st.caption(action["outcome_detail"])
+
+    final_icon = STATUS_ICON.get(incident["status"], "•")
+    if incident["resolved_ts"]:
+        st.markdown(f"{final_icon} **{incident['resolved_ts']}** — Resolved ({incident['status']})")
+    else:
+        st.markdown(f"{final_icon} _Currently: {incident['status']}_")
+
+
 col1, col2 = st.columns(2)
 try:
     trust = fetch("/api/trust-score")["trust_score"]
@@ -42,6 +79,15 @@ incidents = fetch("/api/incidents")["incidents"]
 if incidents:
     df = pd.DataFrame(incidents)
     st.dataframe(df, use_container_width=True)
+
+    st.subheader("Incident Timeline")
+    labels = {
+        row["incident_id"]: f"#{row['incident_id']} — {row['source_type']} ({row['status']})" for row in incidents
+    }
+    selected_id = st.selectbox(
+        "Pick an incident", options=list(labels), format_func=lambda i: labels[i]
+    )
+    render_timeline(fetch(f"/api/incidents/{selected_id}/timeline"))
 else:
     st.info("No incidents yet. Run `python scripts/inject_demo_incident.py` to simulate one.")
 

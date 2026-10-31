@@ -24,7 +24,7 @@ from slack_sdk.signature import SignatureVerifier
 from ops_sentinel import agent_events
 from ops_sentinel.config import settings
 from ops_sentinel.remediation import execute_remediation, reject_incident
-from ops_sentinel.scoring import compute_efficiency_score, compute_trust_score, recent_incidents
+from ops_sentinel.scoring import compute_efficiency_score, compute_trust_score, incident_timeline, recent_incidents
 from ops_sentinel.security import require_api_key, startup_warnings
 from ops_sentinel.slack_notifier import update_incident_card
 from ops_sentinel.watcher import watch_loop
@@ -93,6 +93,14 @@ async def efficiency_score() -> dict[str, float]:
 @app.get("/api/incidents", dependencies=[Depends(require_api_key)])
 async def incidents() -> dict[str, list[dict]]:
     return {"incidents": await asyncio.to_thread(recent_incidents)}
+
+
+@app.get("/api/incidents/{incident_id}/timeline", dependencies=[Depends(require_api_key)])
+async def incident_timeline_route(incident_id: int) -> dict:
+    timeline = await asyncio.to_thread(incident_timeline, incident_id)
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="no incident with that id")
+    return timeline
 
 
 @app.post("/api/events", status_code=202, dependencies=[Depends(require_api_key)])
