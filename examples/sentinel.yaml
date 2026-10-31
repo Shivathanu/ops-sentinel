@@ -1,0 +1,65 @@
+# Ops Sentinel workspace spec. Only `workspace` is required; delete what you do not use.
+# Validate offline with:  sentinel-validate sentinel.yaml
+# Secrets are references, never values: ${env:NAME} or ${file:/run/secrets/name}.
+apiVersion: sentinel/v1
+workspace: data-platform
+environment: production
+
+# Where alerts come from. Each push source gets an ingest URL:
+#   POST https://<engine>/v1/ingest/data-platform/<source name>
+sources:
+  - name: prometheus
+    type: alertmanager            # alertmanager | grafana | webhook | sentinel_runner | <plugin>
+    token: ${env:AM_INGEST_TOKEN} # Alertmanager: http_config.authorization.credentials
+    labels: { team: data-platform }
+
+  - name: ci
+    type: webhook                 # any JSON or text; map custom field names if needed
+    fields: { summary: workflow.name, key: workflow.id, severity: workflow.priority }
+
+  - name: nightly-export
+    type: sentinel_runner         # failures reported by `sentinel watch` on the ETL box
+    severity: high
+
+# Who hears about it. `interactive: true` channels can carry approvals.
+channels:
+  oncall:
+    type: slack
+    token: ${env:SLACK_BOT_TOKEN}
+    channel: "#data-oncall"
+    interactive: true
+  finance:
+    type: webhook
+    url: ${env:FINANCE_WEBHOOK_URL}
+    secret: ${env:FINANCE_WEBHOOK_SECRET}   # receivers verify X-Sentinel-Signature
+
+# First match wins; `continue_matching: true` keeps going. No routes at all = every channel.
+routes:
+  - match: { severity_at_least: critical }
+    notify: [oncall]
+    continue_matching: true
+  - match: { labels: { domain: finance } }
+    notify: [finance]
+    approve: oncall
+  - default: { notify: [oncall], approve: oncall }
+
+# Model roles used by agents (phase 2). Point `smart` at Ollama for a fully local setup.
+models:
+  smart: { provider: anthropic, model: claude-sonnet-5-5, api_key: "${env:ANTHROPIC_API_KEY}" }
+  fast:  { provider: anthropic, model: claude-haiku-5-5,  api_key: "${env:ANTHROPIC_API_KEY}" }
+
+# Read-only data the agent may investigate (phase 2). Exasol is both the system of record and a toolset.
+toolsets:
+  exasol: { schemas: [SENTINEL] }
+
+# Pre-approved remediations (phase 3). Runner actions run on that runner; the engine only names them.
+actions:
+  - id: rerun-export
+    runner: etl-box
+    risk: low
+    verify: { source: nightly-export, healthy_for: 5m }
+
+policies:
+  - { match: { risk: low, environments: staging }, decision: auto }
+  - { match: { risk: [low, medium] }, decision: approve, approvers: ["role:responder"] }
+  - { match: { risk: high }, decision: approve, approvers: ["role:admin"], quorum: 2 }

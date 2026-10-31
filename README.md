@@ -1,172 +1,217 @@
 # Ops Sentinel
 
-> The Autonomous, Cost-Aware Platform Command Center — ExaThon India 2026
+> An AI SRE for data platforms: it turns alerts into triaged, investigated incidents, routes them to the right
+> people, and never changes anything without a human's approval. Exasol is its system of record.
 
-Ops Sentinel closes the loop between **data reliability** (pipeline failures) and
-**cloud cost waste** (runaway/duplicate queries) using Exasol Personal as the
-metadata/analytics layer, MCP as the read-only investigation path, an LLM as the
-triage agent, and Slack as the human-approval gate before anything is ever
-re-executed against the database.
+## The problem
 
-## Why this is not a "plugin / npm package / tool file"
+**Who has it.** Platform, data-engineering and on-call SRE teams at companies whose decisions run on data
+pipelines: nightly ETL into a warehouse, finance and executive dashboards, services that depend on fresh tables.
 
-It is a small **multi-service platform**: a database, a FastAPI orchestration
-engine, a Streamlit dashboard, and a Slack app — four things that talk to each
-other over the network, not one thing that gets installed into a host app.
-Each module below maps directly onto the brief's Module A/B/C split so it can
-be parallelized across a 1–3 person team.
+**What goes wrong.** A pipeline fails at 2 a.m. or a runaway query starts burning compute. The alerts are spread
+across Prometheus, Grafana, CI and cron jobs, and they repeat. The on-call engineer has to work out by hand which
+alert matters, read logs, query the warehouse, trace lineage to see which dashboard is now stale, check whether this
+happened before, and decide on a fix, usually alone, at night, with admin credentials and no record of why.
 
-## Architecture (6-step loop)
+**Why it matters.**
 
-```
-Event Log / Compute Spike
-        │ (ingested into Exasol)
-        ▼
-Exasol Personal (PIPELINE_LOGS, QUERY_METRICS, DATA_LINEAGE)
-        │ watcher.py polls for new FAILED rows / cost spikes
-        ▼
-engine/watcher.py  ──MCP (read-only)──▶  error log + lineage context
-        │
-        ▼
-engine/triage_agent.py  ──LLM API──▶  business-impact narrative + patch SQL
-        │
-        ▼
-engine/slack_notifier.py  ──Slack Block Kit──▶  Approve / Reject card
-        │ (engineer clicks a button)
-        ▼
-engine/main.py: POST /slack/interactions  ──verifies signature──▶
-        │
-        ▼
-engine/remediation.py  ──admin pyexasol (write path, NOT MCP)──▶  re-run SQL
-        │
-        ▼
-Exasol tables refreshed → dashboard/app.py reflects new Trust / Efficiency scores
-```
+- **Decisions are made on stale data.** By the time someone notices, the morning finance dashboard is already wrong
+  and people have acted on it. Trust in the data platform erodes.
+- **Time to resolution is spent on investigation**, not on the fix. The same failures recur and are investigated
+  from scratch each time, because what was learned last time is in someone's head.
+- **Cost waste is silent.** Expensive queries run for hours before a person looks.
+- **Automation is risky.** Letting a script or a model "just fix it" with production credentials is how outages
+  get worse. Teams need speed *and* control.
 
-**Read vs. write split (important):** the Exasol MCP server login is
-database-enforced read-only. Ops Sentinel uses it for investigation (steps
-2–3) and uses a *separate* admin `pyexasol` connection, gated by an explicit
-Slack approval, for the one privileged action in step 5. Every remediation is
-written to `REMEDIATION_ACTIONS` for audit.
+**What Ops Sentinel does about it.** It ingests alerts from any tool, groups duplicates into one incident, and has a
+team of AI agents triage it, investigate it with read-only tools (SQL on Exasol, incident history), and explain
+the business impact and root cause with evidence. The incident is routed to the right channel per team and
+severity. Fixes are limited to a catalog of pre-approved actions and run only after a named person approves.
+Every step, including every model call and tool call, is stored in Exasol for audit.
 
-## Repo layout
+## How it works
 
 ```
-db/            Module A — schema + synthetic seed data
-engine/        Module B — FastAPI engine: MCP client, LLM triage, Slack, remediation
-dashboard/     Module C (dashboard half) — Streamlit Trust Score / Efficiency Rating
-scripts/       Helper scripts (seeding, demo incident injection)
+ Alertmanager / Grafana / CI / any webhook / the CLI runner
+            │  POST /v1/ingest/{workspace}/{source}
+            ▼
+ ┌─────────────────────────── engine (api + worker) ───────────────────────────┐
+ │ normalize → fingerprint → one incident per fingerprint ─► job queue         │
+ │                                                              │              │
+ │  route (team, severity, labels) ─► Slack / webhook          ▼              │
+ │                                        AI SRE: triage ─► investigator       │
+ │                                           │   delegates to data_analyst     │
+ │                                           │   (read-only SQL) and           │
+ │                                           │   history_analyst (past         │
+ │                                           │   incidents)                    │
+ │                                           ▼                                 │
+ │                           impact, root cause, evidence, suggested action    │
+ │                           ─► attached to the incident, messages updated     │
+ └──────────────────────────────────────┬──────────────────────────────────────┘
+                                        ▼
+ Exasol: incidents · signals · timeline · jobs · agent runs & steps · evidence · audit · knowledge
+         + Python UDFs (fingerprint, vector similarity, anomaly scores) where the database supports them
 ```
 
-## Status: Exasol + MCP are live on this machine
+| Concept | In one line |
+| --- | --- |
+| **Workspace spec** | One `sentinel.yaml` per team: sources, channels, routes, models, toolsets, actions, policies |
+| **Source** | Where alerts come from (`alertmanager`, `grafana`, `webhook`, `sentinel_runner`, plugins) |
+| **Incident** | Signals with the same fingerprint, with a lifecycle and a full timeline |
+| **Channel / route** | Who hears about it (Slack, signed webhook, plugins), by severity, labels and source |
+| **Agent** | A declarative AI role with instructions, a model role, tools, subagents, budgets and a result schema |
+| **Toolset** | Read-only tools an agent may call; write tools can never run from model output |
+| **Action / policy** | Pre-approved remediations and the rules for who may approve them |
 
-The Exasol Personal Local Starter Kit is installed and running (`exakit status`),
-`db/schema.sql` is applied, and `scripts/seed_data.py` / `scripts/inject_demo_incident.py`
-have populated real data. `.env` holds this machine's real connection details
-(DSN, admin credentials, and the MCP read-only login — see `exakit info`).
+Design details: [docs/design/ai-sre-platform.md](docs/design/ai-sre-platform.md).
+Pitch deck: [docs/pitch/ops-sentinel-pitch.pptx](docs/pitch/ops-sentinel-pitch.pptx) ([PDF](docs/pitch/ops-sentinel-pitch.pdf)).
 
-Two things to know before you run anything yourself:
+## Status
 
-1. **pyexasol binds parameters by name, not position.** `conn.execute(sql, params)`
-   uses `{name}` placeholders bound from a dict — not `?` markers. Its default
-   conversion also quotes every value as a string, which Exasol rejects in
-   numeric contexts (`LIMIT '20'` fails) — use the `{x!d}` conversion for any
-   numeric placeholder. Every query in `engine/` already does this correctly;
-   keep the pattern if you add more.
-2. **The MCP server needs `uvx`** (installed by the starter kit at
-   `~/.local/bin`) and downloads `exasol-mcp-server` on first use — the very
-   first MCP call takes ~60-90s, after which `uv`'s cache makes it fast.
+| Part | State |
+| --- | --- |
+| Ingest, correlation, routing, Slack and webhook delivery, auto-resolve, timeline | Runs end to end against a live Exasol (verified on the starter kit) |
+| Platform schema, migrations, job queue, least-privilege users | Runs against a live Exasol |
+| Agent runtime (triage, investigator, subagents, read-only Exasol tools, budgets, audit) | Implemented and covered by tests; a full live analysis with a real model is pending |
+| Python UDFs | Installed on Exasol editions with a Python 3 container; otherwise the engine runs the same code |
+| Remediation through the action catalog, policies and approval | Next phase |
+| CLI runner reporting through the ingest API | Next phase |
 
-Proven working end to end against the live database in this session:
-- **Detection** — the real watcher polled `PIPELINE_LOGS`/`QUERY_METRICS` and created real `INCIDENTS` rows.
-- **MCP investigation** — the real `uvx exasol-mcp-server` was spawned and returned real error context + lineage (25 tools discovered).
-- **Dashboard API** — `/api/trust-score`, `/api/efficiency-score`, `/api/incidents` all returned `200 OK` computed from live data.
-- **Remediation guardrail** — a real `DELETE FROM sales_clean` (no `WHERE`) was blocked before touching data; a real approved `UPDATE` was applied and changed real rows; a duplicate approval was rejected by the atomic claim. All three outcomes landed in the real `REMEDIATION_ACTIONS` audit table.
-- **Not yet real**: LLM triage and Slack notifications — no `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`SLACK_BOT_TOKEN` are set in `.env`. The watcher detects this, logs it, and moves on without crashing (see `engine/watcher.py`'s `_handle_incident_safely`). Add those keys to `.env` and the exact same code path becomes fully real — no code changes needed.
+224 automated tests cover the engine (`pytest engine`).
 
-To rerun this yourself:
-```powershell
-python -m venv .venv
-.\.venv\Scripts\pip install -r engine\requirements.txt
-$env:PYTHONPATH = "$PWD"; $env:PYTHONUTF8 = "1"
-.\.venv\Scripts\python.exe -m uvicorn engine.main:app --port 8000
-# in another terminal:
-.\.venv\Scripts\python.exe scripts\inject_demo_incident.py
-.\.venv\Scripts\python.exe scripts\test_mcp_read.py          # proves the MCP read path
-.\.venv\Scripts\python.exe scripts\test_remediation_live.py  # proves the write path + guardrail
+## Quickstart
+
+The full walkthrough, with expected output at each step, is in the **[run guide](docs/getting-started.md)**.
+In short:
+
+```bash
+# 1. Install the engine tools (Python 3.10+)
+python -m venv .venv && source .venv/bin/activate       # Windows: .venv\Scripts\activate
+pip install -e "engine[dev]"
+
+# 2. Once per Exasol: schema and least-privilege users, credentials written into your project's .env
+python engine/scripts/bootstrap_sentinel_roles.py --env-file my-sentinel/.env
+
+# 3. Describe your team and check it offline
+cp examples/sentinel.yaml my-sentinel/ && sentinel-validate my-sentinel/sentinel.yaml
+
+# 4. Build the image, then start api + worker (migrations and UDFs are applied on start)
+docker build -t ops-sentinel:latest engine
+cp deploy/compose/compose.yaml my-sentinel/ && cd my-sentinel && docker compose up -d
 ```
 
-## See it run right now, with nothing installed
+Production deployment (images, secrets, scaling, TLS, upgrades, backups): **[docs/deployment.md](docs/deployment.md)**.
 
-Before touching Exasol, Slack, or an LLM key, you can watch the full 6-step
-loop execute for real — it uses an in-memory SQLite stand-in for Exasol, and
-automatically upgrades any step to a real call the moment you add the
-matching credential to `.env` (LLM triage and the Slack card both do this;
-the MCP read step stays simulated until `exakit` is installed, since that's
-the piece Exasol itself provides):
+## Usage
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\pip install pydantic-settings python-dotenv pyexasol
-$env:PYTHONPATH = "$PWD"; $env:PYTHONUTF8 = "1"
-.\.venv\Scripts\python.exe scripts\dry_run.py
+**Send an alert.** Point a tool at the source's URL. Alertmanager example:
+
+```yaml
+receivers:
+  - name: ops-sentinel
+    webhook_configs:
+      - url: https://sentinel.example.com/v1/ingest/data-platform/prometheus
+        http_config: { authorization: { credentials: <AM_INGEST_TOKEN> } }
 ```
 
-This also doubles as a smoke test for `engine/remediation.py`'s safety
-guardrail — the run prints three deliberately dangerous SQL strings (`DROP
-TABLE`, an unscoped `DELETE`, a multi-statement payload) and shows the real
-validation function rejecting each one before showing the approved fix
-actually being applied.
+Anything that can POST works with a `webhook` source:
 
-## Setup (weekend build order)
+```bash
+curl -X POST https://sentinel.example.com/v1/ingest/data-platform/jobs \
+  -H "X-API-Key: $OPS_SENTINEL_API_KEY" \
+  -d '{"title": "Backup job exited 1", "severity": "warning", "id": "backup-db-2"}'
+```
 
-### Day 1 morning — Module A (whoever is comfortable with SQL)
-1. Install the Exasol Personal Local Starter Kit (one command — ask your AI
-   assistant to "set up the Exasol starter kit" or run it yourself):
-   - macOS/Linux/WSL: `curl https://www.exasol.com/install/starter-kit.sh | sh`
-   - Windows PowerShell: `irm https://www.exasol.com/install/starter-kit.ps1 | iex`
-2. Connect an MCP client: `exakit mcp-setup` (pick Cursor/Claude/etc.)
-3. Create the schema and load synthetic data:
-   ```powershell
-   exapump sql -p starter-kit -f db/schema.sql
-   python scripts/seed_data.py
-   ```
-4. Sanity check: ask your MCP-connected assistant to list tables in the
-   `SENTINEL` schema and show you the SQL before running anything (same
-   inspect-before-run discipline as the rest of the kit).
+**Read incidents.**
 
-### Day 1 afternoon — Module B (whoever owns backend/Python)
-1. `python -m venv .venv && .venv\Scripts\activate` (Windows) then
-   `pip install -r engine/requirements.txt`
-2. Copy `.env.example` to `.env` and fill in:
-   - `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
-   - `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `SLACK_CHANNEL_ID`
-   - `EXASOL_ADMIN_*` (the admin connection used only for remediation writes —
-     `exakit info` shows where the password is stored)
-3. Run the engine: `uvicorn engine.main:app --reload --port 8000`
-4. Expose it to Slack for interactivity callbacks during the demo:
-   `ngrok http 8000`, then set the Slack app's **Interactivity Request URL**
-   to `https://<ngrok-id>.ngrok.io/slack/interactions`.
+```bash
+curl -H "X-API-Key: $OPS_SENTINEL_API_KEY" https://sentinel.example.com/v1/workspaces/data-platform/incidents
+curl -H "X-API-Key: $OPS_SENTINEL_API_KEY" https://sentinel.example.com/v1/workspaces/data-platform/incidents/<id>
+```
 
-### Day 2 morning — Module C (whoever owns frontend)
-1. `pip install -r dashboard/requirements.txt`
-2. `streamlit run dashboard/app.py` — reads from the engine's REST API
-   (`/api/trust-score`, `/api/efficiency-score`, `/api/incidents`).
+The detail view returns the incident, its analysis and its timeline (`opened`, `routed`, `notified`,
+`agent.started`, `agent.tool`, `analysis`, `status.resolved`, ...). Everything is also queryable in Exasol, for example
+`SELECT * FROM OPS_SENTINEL.AGENT_STEPS WHERE RUN_ID = ...`.
 
-### Day 2 afternoon — integration + demo script
-1. Run `python scripts/inject_demo_incident.py` to simulate a pipeline
-   failure and a cost-spike query landing in Exasol.
-2. Watch `watcher.py` logs: it should detect the row, call MCP for context,
-   call the LLM, and post a Slack card within a few seconds.
-3. Click **Approve** in Slack → confirm `remediation.py` re-runs the fix and
-   the dashboard's Trust Score / Efficiency Rating move.
-4. Rehearse the "no" path too — click **Reject** and show the incident stays
-   open, nothing executes.
+**Configure a team.** A complete `sentinel.yaml` is in [examples/sentinel.yaml](examples/sentinel.yaml). The
+essentials:
 
-## Team split (1–3 people)
+```yaml
+workspace: data-platform
+sources:
+  - { name: prometheus, type: alertmanager, token: "${env:AM_INGEST_TOKEN}" }
+channels:
+  oncall: { type: slack, token: "${env:SLACK_BOT_TOKEN}", channel: "#data-oncall", interactive: true }
+routes:
+  - match: { severity_at_least: high }
+    notify: [oncall]
+    approve: oncall
+models:
+  smart: { provider: anthropic, model: claude-opus-5-5, api_key: "${env:ANTHROPIC_API_KEY}" }
+  fast:  { provider: anthropic, model: claude-haiku-5-5, api_key: "${env:ANTHROPIC_API_KEY}" }
+toolsets:
+  exasol: { schemas: [SENTINEL] }
+```
 
-| People | Split |
-|---|---|
-| 1 | Do Module A first (fast), then B, then C — in that order, since B depends on A and C depends on B. |
-| 2 | Person 1: Module A + Module B's `mcp_client.py`/`triage_agent.py`. Person 2: Module B's `main.py`/`slack_notifier.py`/`remediation.py` + Module C. |
-| 3 | Person 1: Module A. Person 2: Module B. Person 3: Module C + the Slack app config/ngrok plumbing + demo script. |
+Secrets are always references (`${env:NAME}`, `${file:/run/secrets/name}`), never values. Several teams share one
+deployment by putting one spec per team in a directory. Models can be Claude, OpenAI or a local model through
+Ollama (`provider: ollama`).
+
+**Engine commands.**
+
+| Command | Purpose |
+| --- | --- |
+| `uvicorn sentinel.main:app` | The api (ingest, incidents, health, Slack callbacks) |
+| `sentinel-worker` | Processes jobs: routing, notifications, AI analysis |
+| `sentinel-migrate [--status]` | Applies platform migrations and installs UDFs (the api does this on start by default) |
+| `sentinel-validate [spec]` | Checks specs offline and prints ingest URLs and routing |
+
+## Repository layout
+
+```
+engine/             Python engine (pyproject.toml, Dockerfile); import name `sentinel`
+  sentinel/         api, ingest, agents, llm, store (Exasol), channels, workers, udf_lib
+  tests/            unit tests
+  scripts/          database bootstrap, demo data, live checks
+  dashboard/        Streamlit dashboard (trust and efficiency scores)
+cli/                ops-sentinel-cli: TypeScript runner that watches commands, logs and endpoints (npm)
+deploy/compose/     docker compose for api + worker (optional local Exasol)
+examples/           example workspace spec
+sql/                schema and roles for the demo pipeline tables
+docs/               run guide, deployment, design, pitch deck
+```
+
+## Security model
+
+Speed must not cost control, so every path that could change something has independent guards:
+
+1. **Agents are read-only.** Tools declare a capability, and the loop only runs `read` tools. A write tool called by
+   a model is refused and recorded. The Exasol toolset connects as `mcp_readonly`, so the database enforces it too.
+2. **Model input is data.** Alert text and tool output are treated as data, arguments are checked against each
+   tool's schema, output is size-limited, and known secrets are redacted before anything reaches a model.
+3. **Pre-approved actions only.** A fix is an action id from the team's catalog, never model-written code. Runner
+   actions keep their commands on the client machine; the engine only names the id.
+4. **Human approval.** Only listed approvers can approve, Slack requests are signature-checked, and an atomic claim
+   means a double click runs a fix once.
+5. **Least-privilege database users.** `sentinel_owner` migrates, `sentinel_engine` runs (and can only append to
+   the audit log), `sentinel_executor` runs approved SQL on named business tables, `mcp_readonly` investigates.
+6. **SQL guardrail** for SQL fixes: one allow-listed statement, a real `WHERE`, no DDL, no Sentinel or system
+   tables, target limited to the incident's lineage.
+7. **Everything is audited** in Exasol: incidents, signals, agent runs and steps, evidence, notifications, decisions.
+
+Every control fails closed: a missing key, token, approver list or credential refuses the request.
+
+## Development
+
+```bash
+pip install -e "engine[dev,dashboard]"
+ruff check engine
+pytest engine
+cd cli && npm install && npm test
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
+
+## Licence
+
+[Apache License 2.0](LICENSE).

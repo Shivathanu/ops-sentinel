@@ -1,0 +1,15 @@
+{
+  "engine": { "url": "http://localhost:8000", "apiKeyEnv": "OPS_SENTINEL_API_KEY" },
+  "pollSeconds": 3,
+  "approvalTimeoutMinutes": 30,
+  "sources": [
+    {
+      "name": "nightly-export",
+      "type": "command",
+      "run": "node flaky-job.mjs",
+      "intervalSeconds": 10,
+      "timeoutSeconds": 30,
+      "fix": { "id": "clear-stale-lock", "run": "node heal.mjs", "maxAttempts": 2, "timeoutSeconds": 30 }
+    }
+  ]
+}

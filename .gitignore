@@ -1,4 +1,40 @@
+# secrets and local config
 .env
-.venv/
+.env.*
+!.env.example
+
+# python
 __pycache__/
-*.pyc
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# runtime output
+*.log
+
+# editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# CLI package
+cli/node_modules/
+cli/dist/
+cli/examples/.healed
+.sentinel/
+
+# local workspace from the run guide, and tool-generated skill links into .venv
+my-sentinel/
+.agents/
+.claude/skills/developing-with-streamlit
+.claude/settings.local.json
