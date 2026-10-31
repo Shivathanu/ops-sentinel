@@ -110,13 +110,15 @@ CPU, one 8B-model turn can take minutes.
 ## 4. Start the engine
 
 ```
+docker build -t ops-sentinel:latest engine     # from the repository root
 cd my-sentinel
-docker compose up -d --build
+docker compose up -d
 docker compose ps            # api and worker both "healthy"
 curl localhost:8000/v1/readyz
 ```
 
-On start, the api applies pending migrations, installs the UDFs, records the spec version in Exasol and validates
+Build the image first: the `build:` path in `compose.yaml` is relative to `deploy/compose/`, so it does not resolve
+from a copied project folder. On start, the api applies pending migrations, installs the UDFs, records the spec version in Exasol and validates
 every channel. If anything is wrong it exits with the reason (`docker compose logs api`) instead of half-starting.
 
 > **UDFs and the starter kit.** The local "nano" runtime has no Python 3 script language container, so the log
@@ -133,9 +135,13 @@ every channel. If anything is wrong it exits with the reason (`docker compose lo
 
 ## 6. See the flow
 
-Send a test alert (the demo project ships `send_alert.ps1`, which posts an Alertmanager payload), then:
+Send a test alert as Alertmanager would, then read it back:
 
 ```
+curl -X POST localhost:8000/v1/ingest/demo/prometheus -H "Authorization: Bearer $AM_INGEST_TOKEN" \
+  -H "Content-Type: application/json" -d '{"version":"4","status":"firing","alerts":[{"status":"firing",
+  "labels":{"alertname":"FinanceExportFailed","severity":"critical","job":"finance-export"},
+  "annotations":{"summary":"Nightly finance export failed"}}]}'
 curl -H "X-API-Key: $OPS_SENTINEL_API_KEY" localhost:8000/v1/workspaces/demo/incidents
 curl -H "X-API-Key: $OPS_SENTINEL_API_KEY" localhost:8000/v1/workspaces/demo/incidents/<id>
 ```
@@ -175,6 +181,8 @@ python engine/scripts/bootstrap_sentinel_roles.py --reset-passwords --env-file m
 | api exits with `invalid workspace configuration` | Run `sentinel-validate`; it names the source, channel or secret at fault |
 | `401 invalid or missing token` on ingest | A source with `token:` accepts only that token, not the API key |
 | Worker `unhealthy` | It cannot reach Exasol; `docker compose logs worker` |
+| `unable to prepare context: path ".../engine" not found` | `compose.yaml` was copied out of `deploy/compose/`; build the image first (step 4) and run `docker compose up -d` without `--build` |
+| Notifications go to channels that are not in your spec, or jobs retry with errors about unknown channels | Another deployment uses the same Exasol and platform schema, so its workers take your jobs. Give each deployment its own `OPS_SENTINEL_PLATFORM_SCHEMA` (and run step 2 with `--platform-schema`) |
 | api exits with `environment variable ANTHROPIC_API_KEY is not set` | The spec names a model key that `.env` lacks: add it, or remove `models` to run without AI analysis |
 | Timeline shows `agent.finished` with `budget_exhausted` | The model was too slow or the task too big for the agent's budget; raise `budget` for that agent in the spec, or use a faster model |
 | Analysis says it could not query Exasol | Set `EXA_USER` / `EXA_PASSWORD` to the read-only login, and list the schemas under `toolsets.exasol.schemas` |

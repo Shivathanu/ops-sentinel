@@ -95,8 +95,9 @@ python engine/scripts/bootstrap_sentinel_roles.py --env-file my-sentinel/.env
 # 3. Describe your team and check it offline
 cp examples/sentinel.yaml my-sentinel/ && sentinel-validate my-sentinel/sentinel.yaml
 
-# 4. Start api + worker (migrations and UDFs are applied on start)
-cp deploy/compose/compose.yaml my-sentinel/ && cd my-sentinel && docker compose up -d --build
+# 4. Build the image, then start api + worker (migrations and UDFs are applied on start)
+docker build -t ops-sentinel:latest engine
+cp deploy/compose/compose.yaml my-sentinel/ && cd my-sentinel && docker compose up -d
 ```
 
 Production deployment (images, secrets, scaling, TLS, upgrades, backups): **[docs/deployment.md](docs/deployment.md)**.

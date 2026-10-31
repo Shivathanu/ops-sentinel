@@ -65,6 +65,12 @@ def test_generic_webhook_understands_common_fields_lists_and_text() -> None:
     assert text.summary == "backup job exited 1"
 
 
+@pytest.mark.parametrize("kind", ["webhook", "alertmanager"])
+def test_json_with_a_utf8_bom_is_accepted(kind: str) -> None:
+    # Windows PowerShell 5.1 prefixes piped request bodies with a BOM.
+    body = b"\xef\xbb\xbf" + json.dumps(ALERTMANAGER if kind == "alertmanager" else {"title": "Backup failed"}).encode()
+    assert _parse(kind, body)
+
 def test_generic_webhook_field_mapping_reaches_into_nested_payloads() -> None:
     (signal,) = _parse("webhook", {"alert": {"name": "Queue lag", "uid": "q-1", "prio": "crit"}},
                        fields={"summary": "alert.name", "key": "alert.uid", "severity": "alert.prio"})

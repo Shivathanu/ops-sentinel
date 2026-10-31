@@ -60,7 +60,7 @@ def parse_time(value: Any) -> datetime:
 
 def _json(body: bytes) -> Any:
     try:
-        return json.loads(body.decode("utf-8"))
+        return json.loads(body.decode("utf-8-sig"))
     except (UnicodeDecodeError, ValueError) as exc:
         raise SourceError(f"body is not valid JSON: {exc}") from exc
 
@@ -146,7 +146,7 @@ class WebhookSource:
 
     def parse(self, spec: SourceSpec, body: bytes, headers: Mapping[str, str]) -> list[Signal]:
         content_type = headers.get("content-type", "")
-        text = body.decode("utf-8", errors="replace").strip()
+        text = body.decode("utf-8-sig", errors="replace").strip()
         if "json" in content_type or text[:1] in ("{", "["):
             data = _json(body)
             items = data if isinstance(data, list) else [data]
