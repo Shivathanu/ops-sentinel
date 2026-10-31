@@ -18,7 +18,7 @@ alerting tool ──POST──► /v1/ingest/{workspace}/{source} ──► Exas
 | Python 3.10+ (for the one-time bootstrap and `sentinel-validate`) | `python --version` |
 | Optional: a Slack bot token with `chat:write` and the channel id | |
 
-Install the engine tools once: `pip install ops-sentinel` (from this repository: `pip install -e .`).
+Install the engine tools once: `pip install ops-sentinel` (from this repository: `pip install -e engine`).
 
 ## 1. Create a project folder
 
@@ -45,7 +45,7 @@ SLACK_CHANNEL_ID=C0123456789
 ## 2. Bootstrap the database (once per Exasol)
 
 ```
-python scripts/bootstrap_sentinel_roles.py --env-file my-sentinel/.env
+python engine/scripts/bootstrap_sentinel_roles.py --env-file my-sentinel/.env
 ```
 
 This creates the `OPS_SENTINEL` schema and the users `sentinel_owner` (migrations), `sentinel_engine` (runtime),

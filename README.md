@@ -40,7 +40,7 @@ approved remediation, uses a separate write connection. See [docs/architecture.m
 | Detection, MCP investigation, dashboard API, remediation guardrail and audit | Exercised against a live Exasol Personal instance during development |
 | LLM triage | Implemented, not yet exercised with a live key |
 | Slack approval card | Implemented, not yet exercised with a live bot token |
-| Offline demo (`scripts/dry_run.py`) | Runs the whole loop against an in-memory SQLite stand-in, no credentials needed |
+| Offline demo (`engine/scripts/dry_run.py`) | Runs the whole loop against an in-memory SQLite stand-in, no credentials needed |
 
 ## Quickstart
 
@@ -49,24 +49,24 @@ Requires Python 3.10 or newer and, for the live loop, an Exasol Personal instanc
 ```bash
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[dashboard]"
+pip install -e "engine[dashboard]"
 cp .env.example .env               # Windows: copy .env.example .env, then fill in the values
 ```
 
 See the offline demo first, no database or keys needed:
 
 ```bash
-python scripts/dry_run.py
+python engine/scripts/dry_run.py
 ```
 
 Then run it for real:
 
 ```bash
 exapump sql -p starter-kit -f sql/schema.sql      # create the SENTINEL schema
-python scripts/seed_data.py                       # load synthetic data only
-python -m uvicorn ops_sentinel.main:app --port 8000
-streamlit run dashboard/app.py                    # in a second terminal
-python scripts/inject_demo_incident.py            # in a third: simulate a failure and a cost spike
+python engine/scripts/seed_data.py                # load synthetic data only
+python -m uvicorn sentinel.main:app --port 8000
+streamlit run engine/dashboard/app.py             # in a second terminal
+python engine/scripts/inject_demo_incident.py     # in a third: simulate a failure and a cost spike
 ```
 
 For the Slack approval step, set `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` and `SLACK_CHANNEL_ID` in `.env`
@@ -96,21 +96,24 @@ approval tells the agent to run that id, so the engine can never make a client m
 ## Repository layout
 
 ```
-src/ops_sentinel/   engine: watcher, MCP client, LLM triage, Slack notifier, remediation, scoring, API
-dashboard/          Streamlit command dashboard (reads the engine's REST API)
+engine/             Python engine (pyproject.toml, Dockerfile)
+  sentinel/     the package: API, ingest, agents, store (Exasol), channels, workers
+  tests/            unit tests
+  scripts/          role bootstrap, seeding, demo incident injection, offline demo, live checks
+  dashboard/        Streamlit command dashboard (reads the engine's REST API)
 cli/                ops-sentinel-cli: TypeScript agent that watches client automation (npm package)
-sql/schema.sql      Exasol schema
-scripts/            seeding, demo incident injection, offline demo, live checks
-tests/              unit tests (guardrail, triage routing, MCP parsing, API, agent events)
-docs/               architecture
+deploy/compose/     docker compose for api + worker
+examples/           example workspace spec (sentinel.yaml)
+sql/                Exasol schema and roles for the v1 tables
+docs/               architecture, design, getting started
 ```
 
 ## Development
 
 ```bash
-pip install -e ".[dev,dashboard]"
-ruff check .
-pytest
+pip install -e "engine[dev,dashboard]"
+ruff check engine
+pytest engine
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
@@ -139,7 +142,7 @@ of falling back to something weaker.
 - Agent incidents are not de-duplicated by the engine; the CLI de-duplicates per source, so two agents watching the
   same thing would each report it.
 - The watcher must run as a single process; two workers could both pick up the same failure.
-- `scripts/` helpers still connect with certificate validation off and are for local demos only.
+- `engine/scripts/` helpers still connect with certificate validation off and are for local demos only.
 - The guardrail is a deny-by-default filter, not a SQL parser. Widen it only with a test that pins the pattern.
 
 ## License

@@ -50,7 +50,7 @@ sentinel watch               # runs the listeners until stopped
 `business-context.md` (read by the triage model with every incident), `docker-compose.yml`, `.gitignore` and a README.
 It never overwrites existing files without `--force`. For scripts: `sentinel init --yes --provider ollama --listener command --listener webhook`.
 
-The engine image is `ops-sentinel:latest`. Build it from the engine repo with `docker build -t ops-sentinel .`, or pass
+The engine image is `ops-sentinel:latest`. Build it from the repository with `docker build -t ops-sentinel engine`, or pass
 `--engine-build <path-to-repo>` to `init` so Compose builds it. The engine needs an Exasol instance; the generated
 `.env` points at one on the host (`host.docker.internal`). Commands read `.env` from `--dir` (default: the current
 directory); real environment variables win over it.

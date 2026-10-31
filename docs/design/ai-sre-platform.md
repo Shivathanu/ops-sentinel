@@ -163,7 +163,7 @@ queue is a table, so NATS or SQS can replace it later.
 | `sentinel_executor` | Runs approved, guardrail-checked remediation SQL | DML on named business tables only |
 | `mcp_readonly` | Read-only investigation over MCP | `SELECT ANY TABLE` |
 
-`scripts/bootstrap_sentinel_roles.py` creates all four users with generated passwords in one DBA run. On a laptop,
+`engine/scripts/bootstrap_sentinel_roles.py` creates all four users with generated passwords in one DBA run. On a laptop,
 leaving `EXASOL_MIGRATOR_USER` empty makes the runtime user migrate too.
 
 ### Migrations
@@ -185,7 +185,7 @@ error. A migration and its bookkeeping row commit together, so replicas starting
 
 ### UDFs (in-database intelligence)
 
-UDF bodies are the source of `ops_sentinel/udf_lib/*`, installed verbatim with a small `run(ctx)` adapter, so the
+UDF bodies are the source of `engine/sentinel/udf_lib/*`, installed verbatim with a small `run(ctx)` adapter, so the
 code in the database is the code the unit tests cover.
 
 | UDF | Kind | Use |
@@ -260,7 +260,7 @@ Ways to add a tool, from least to most code:
 3. **Command toolset**: a script on a runner, with JSON in and JSON out. It runs at the edge, so data that cannot
    leave the network stays there.
 4. **Python toolset**: a class implementing `Toolset` and registered through an entry point
-   (`ops_sentinel.toolsets`).
+   (`sentinel.toolsets`).
 
 Built-in toolsets ship first for what this project already touches: `exasol` (wrapping the existing MCP read
 path), `postgres`, `http`, `prometheus`, `loki`, `kubernetes`, `github`, `slack_history`, plus internal toolsets
@@ -493,13 +493,14 @@ class KnowledgeConnector(Protocol):
     async def list_changed(self, since: datetime | None) -> AsyncIterator[RawDocument]: ...
 ```
 
-Plugins register through Python entry points (`ops_sentinel.sources`, `.toolsets`, `.channels`, `.actions`,
+Plugins register through Python entry points (`sentinel.sources`, `.toolsets`, `.channels`, `.actions`,
 `.models`, `.knowledge`), so a team ships its own plugin as a pip package without forking.
 
 ## 11. Proposed code layout
 
 ```
-src/ops_sentinel/
+engine/           Python project: pyproject.toml, Dockerfile, tests/, scripts/, dashboard/
+ sentinel/    the package (import name)
   api/            app.py, routes/ (ingest, incidents, approvals, runners, config, mcp), auth.py, deps.py
   core/           models.py (Pydantic domain), states.py, config/ (schema, loader, secrets), tenancy.py
   store/          exasol.py (transactions, collision retry), migrate.py + migrations/*.sql, udfs.py, queue.py, incidents.py
@@ -590,7 +591,7 @@ Each phase ships working software. v1 endpoints (`/api/events`) stay behind a co
 ## 16. Running it today
 
 ```
-python scripts/bootstrap_sentinel_roles.py          # once, as a DBA: schema + 4 users, prints .env lines
+python engine/scripts/bootstrap_sentinel_roles.py   # once, as a DBA: schema + 4 users, prints .env lines
 cp examples/sentinel.yaml deploy/compose/            # edit workspace, sources, channels, routes
 sentinel-validate deploy/compose/sentinel.yaml       # offline check; prints each source's ingest URL
 cd deploy/compose && docker compose up -d            # api migrates + installs UDFs, worker processes jobs

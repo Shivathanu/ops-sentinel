@@ -4,9 +4,9 @@
 
 ```bash
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -e ".[dev,dashboard]"
-ruff check .
-pytest
+pip install -e "engine[dev,dashboard]"
+ruff check engine
+pytest engine
 ```
 
 The CLI has its own checks (Node 18.17 or newer):
@@ -22,7 +22,7 @@ CI runs the same two commands on Python 3.10 and 3.12.
 - **Reads and writes stay separate.** Investigation goes through `mcp_client.py` only. Anything that writes goes
   through `remediation.py`. Do not add a second path that executes model-suggested SQL.
 - **Widen the guardrail with tests.** Add the real remediation pattern to
-  `tests/test_guardrail.py` first, then change `guardrail.py`.
+  `engine/tests/test_guardrail.py` first, then change `guardrail.py`.
 - **Known gaps are strict `xfail` tests.** When you fix one, the test starts passing and fails the suite until you
   remove its marker. That is intended.
 - **Fail closed.** A missing credential, key or allow-list must refuse the action, never fall back to a weaker path.

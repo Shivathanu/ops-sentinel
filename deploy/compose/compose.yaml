@@ -1,7 +1,7 @@
 # Ops Sentinel platform: api + worker on one image, Exasol as the system of record.
 #
 #   cp ../../examples/sentinel.yaml ./sentinel.yaml      # edit: workspace, sources, channels, routes
-#   cp ../../.env.example ./.env                         # fill in Exasol users (scripts/bootstrap_sentinel_roles.py)
+#   cp ../../.env.example ./.env                         # fill in Exasol users (engine/scripts/bootstrap_sentinel_roles.py)
 #   docker compose up -d                                 # api migrates the schema and installs UDFs on start
 #   docker compose --profile exasol up -d                # same, plus a local Exasol (needs privileged mode)
 #
@@ -10,7 +10,7 @@ name: ops-sentinel
 
 x-engine: &engine
   image: ${OPS_SENTINEL_IMAGE:-ops-sentinel:latest}
-  build: ../..
+  build: ../../engine
   env_file: .env
   environment:
     OPS_SENTINEL_SPEC_FILE: /app/config/sentinel.yaml

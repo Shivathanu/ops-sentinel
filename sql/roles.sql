@@ -5,7 +5,7 @@
 --   mcp_readonly      investigation over MCP: SELECT only
 --   sentinel_engine   incident bookkeeping and the audit trail: no access to business data
 --   sentinel_executor runs approved remediation SQL: DML on business tables only, no access to Sentinel tables
--- The guardrail in src/ops_sentinel/guardrail.py is the first control; these grants are the second, so a guardrail
+-- The guardrail in engine/sentinel/guardrail.py is the first control; these grants are the second, so a guardrail
 -- bug still cannot touch the audit trail.
 
 -- 1. Read-only investigation user (matches EXA_USER) -------------------------

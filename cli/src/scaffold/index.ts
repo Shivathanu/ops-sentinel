@@ -17,7 +17,7 @@ export interface ScaffoldOptions {
   provider: Provider;
   model: string;
   listeners: readonly ListenerKind[];
-  /** Image the compose file runs. Build it from the engine repo with `docker build -t ops-sentinel .`. */
+  /** Image the compose file runs. Build it from the repository with `docker build -t ops-sentinel engine`. */
   engineImage: string;
   /** Path to the engine source tree; when set, compose builds the image from it instead of pulling `engineImage`. */
   engineBuild?: string;
