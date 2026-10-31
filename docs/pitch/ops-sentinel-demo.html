@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ops Sentinel Demo</title>
+<style>
+  :root {
+    --bg: #0b1020; --panel: #121a2e; --panel-2: #0f1626; --line: #22304d;
+    --text: #e6ecf7; --muted: #8a9abb; --accent: #4f8cff; --ok: #3ccf91; --warn: #ffb547; --bad: #ff6b6b;
+    --mono: "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+    --sans: "Segoe UI", "Inter", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1280px; height: 720px; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--sans); }
+
+  .stage { position: relative; width: 1280px; height: 720px; }
+  .topbar { position: absolute; inset: 0 0 auto 0; height: 56px; display: flex; align-items: center; gap: 18px;
+            padding: 0 32px; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+  .brand { font-weight: 700; letter-spacing: .3px; }
+  .brand span { color: var(--accent); }
+  .steps { display: flex; gap: 8px; margin-left: auto; }
+  .step { font-size: 12px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
+          transition: all .35s; }
+  .step.on { color: #fff; border-color: var(--accent); background: rgba(79,140,255,.18); }
+  .step.done { color: var(--ok); border-color: rgba(60,207,145,.45); }
+
+  .main { position: absolute; top: 56px; left: 0; right: 0; bottom: 64px; display: grid;
+          grid-template-columns: 1fr 420px; gap: 20px; padding: 20px 32px; }
+  .term { background: #070b16; border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+          display: flex; flex-direction: column; }
+  .term-head { height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 14px; background: #0c1222;
+               border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .term-body { flex: 1; padding: 14px 18px; font: 14.5px/1.55 var(--mono); white-space: pre-wrap; word-break: break-all;
+               overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+  .term-body .ln { min-height: 1.55em; }
+  .prompt { color: var(--ok); }
+  .cmd { color: #fff; }
+  .out { color: #b7c3dc; }
+  .dim { color: var(--muted); }
+  .hl-ok { color: var(--ok); } .hl-warn { color: var(--warn); } .hl-bad { color: var(--bad); } .hl-acc { color: #8fb6ff; }
+  .cursor { display: inline-block; width: 8px; height: 1.1em; background: var(--ok); vertical-align: -2px;
+            animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .side { display: flex; flex-direction: column; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .card h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin-bottom: 12px;
+             display: flex; align-items: center; gap: 8px; }
+  .card h3 .db { margin-left: auto; font-size: 11px; letter-spacing: .5px; color: var(--accent); text-transform: none; }
+  .empty { color: var(--muted); font-size: 14px; padding: 18px 0; text-align: center; }
+  .inc-title { font-weight: 600; font-size: 16px; margin-bottom: 4px; }
+  .inc-id { font: 12px var(--mono); color: var(--muted); margin-bottom: 14px; }
+  .kv { display: grid; grid-template-columns: 110px 1fr; row-gap: 8px; font-size: 14px; }
+  .kv dt { color: var(--muted); }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; }
+  .pill.open { background: rgba(255,181,71,.16); color: var(--warn); }
+  .pill.resolved { background: rgba(60,207,145,.16); color: var(--ok); }
+  .pill.crit { background: rgba(255,107,107,.16); color: var(--bad); }
+  .bump { animation: bump .5s; }
+  @keyframes bump { 40% { transform: scale(1.25); } }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font: 12px var(--mono); padding: 4px 9px; border-radius: 6px; background: #18233d; border: 1px solid var(--line);
+          animation: pop .35s ease-out; }
+  .chip.k-notified, .chip.k-routed { border-color: rgba(79,140,255,.5); color: #a9c6ff; }
+  .chip.k-res { border-color: rgba(60,207,145,.5); color: var(--ok); }
+  @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.9); } }
+  .notify { border-left: 3px solid var(--accent); padding: 10px 12px; background: #0f1830; border-radius: 6px; font-size: 13.5px;
+            animation: pop .4s ease-out; }
+  .notify .from { font-size: 11px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px; }
+  .notify.res { border-left-color: var(--ok); }
+
+  .caption { position: absolute; left: 0; right: 0; bottom: 0; height: 64px; display: flex; align-items: center; gap: 14px;
+             padding: 0 32px; border-top: 1px solid var(--line); background: var(--panel-2); font-size: 19px; }
+  .caption .num { font: 600 13px var(--mono); color: var(--accent); border: 1px solid var(--accent); border-radius: 6px;
+                  padding: 3px 8px; }
+  .caption .txt { transition: opacity .3s; }
+
+  .cover { position: absolute; inset: 0; background: radial-gradient(1200px 600px at 50% 30%, #16224a 0%, var(--bg) 60%);
+           display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+           transition: opacity .7s; z-index: 5; }
+  .cover.hide { opacity: 0; pointer-events: none; }
+  .cover h1 { font-size: 56px; letter-spacing: -.5px; }
+  .cover h1 span { color: var(--accent); }
+  .cover p { font-size: 22px; color: var(--muted); max-width: 900px; text-align: center; line-height: 1.45; }
+  .flow { display: flex; align-items: center; gap: 0; margin-top: 18px; }
+  .node { padding: 12px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 15px;
+          opacity: 0; transform: translateY(8px); transition: all .45s; }
+  .node.in { opacity: 1; transform: none; }
+  .node b { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 3px; }
+  .node.exa { border-color: var(--accent); }
+  .arrow { width: 46px; height: 2px; background: var(--line); position: relative; overflow: hidden; }
+  .arrow::after { content: ""; position: absolute; top: 0; left: -30%; width: 30%; height: 100%; background: var(--accent);
+                  animation: flow 1.4s linear infinite; }
+  @keyframes flow { to { left: 100%; } }
+  .tag { font: 13px var(--mono); color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="topbar">
+    <div class="brand">Ops <span>Sentinel</span></div>
+    <div class="dim" style="font-size:13px">AI SRE on Exasol &middot; real run, local Exasol + Docker</div>
+    <div class="steps" id="steps"></div>
+  </div>
+
+  <div class="main">
+    <div class="term">
+      <div class="term-head">
+        <span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span>
+        <span class="dot" style="background:#28c840"></span><span style="margin-left:10px">my-sentinel &mdash; bash</span>
+      </div>
+      <div class="term-body" id="term"></div>
+    </div>
+
+    <div class="side">
+      <div class="card" id="incCard">
+        <h3>Incident <span class="db">OPS_SENTINEL.INCIDENTS</span></h3>
+        <div class="empty" id="incEmpty">No incidents yet</div>
+        <div id="inc" style="display:none">
+          <div class="inc-title">FinanceExportFailed: Nightly finance export failed</div>
+          <div class="inc-id">01M69GRTX59ZPV3EB7ZN4K8CAY</div>
+          <dl class="kv">
+            <dt>Status</dt><dd><span class="pill open" id="status">open</span></dd>
+            <dt>Severity</dt><dd><span class="pill crit">critical</span></dd>
+            <dt>Service</dt><dd>finance-export</dd>
+            <dt>Signals</dt><dd><b id="signals">1</b></dd>
+          </dl>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Timeline <span class="db">INCIDENT_EVENTS</span></h3>
+        <div class="chips" id="chips"><span class="empty" style="padding:6px 0" id="chipsEmpty">&mdash;</span></div>
+      </div>
+      <div class="card" style="flex:1">
+        <h3>Channel <span class="db">webhook &rarr; on-call</span></h3>
+        <div id="notify"><div class="empty" id="notifyEmpty">Nothing sent yet</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="caption"><span class="num" id="capNum">00</span><span class="txt" id="cap"></span></div>
+
+  <div class="cover" id="cover">
+    <h1>Ops <span>Sentinel</span></h1>
+    <p>From an alert to a resolved incident, with every step recorded in Exasol.</p>
+    <div class="flow" id="flow">
+      <div class="node"><b>Source</b>Alertmanager</div><div class="arrow"></div>
+      <div class="node"><b>API</b>/v1/ingest</div><div class="arrow"></div>
+      <div class="node exa"><b>System of record</b>Exasol</div><div class="arrow"></div>
+      <div class="node"><b>Worker</b>route &middot; analyse</div><div class="arrow"></div>
+      <div class="node"><b>Channel</b>Slack / webhook</div>
+    </div>
+    <div class="tag" id="coverTag" style="opacity:0;transition:opacity .5s">Replays output from a real run &middot; local Exasol starter kit &middot; Docker</div>
+  </div>
+</div>
+
+<script>
+const STEPS = ["Validate", "Start", "Alert", "Dedupe", "Notify", "Resolve", "Guardrails"];
+const stepsEl = document.getElementById("steps");
+STEPS.forEach((s, i) => { const el = document.createElement("span"); el.className = "step"; el.textContent = `${i + 1}. ${s}`; stepsEl.appendChild(el); });
+
+const term = document.getElementById("term");
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const MAX_LINES = 19;
+
+function trimTerm() { while (term.children.length > MAX_LINES) term.removeChild(term.firstChild); }
+function line(html, cls = "out") { const d = document.createElement("div"); d.className = `ln ${cls}`; d.innerHTML = html; term.appendChild(d); trimTerm(); return d; }
+function clearTerm() { term.innerHTML = ""; }
+
+async function type(cmd, speed = 26) {
+  const d = line('<span class="prompt">$ </span><span class="cmd"></span><span class="cursor"></span>', "");
+  const c = d.querySelector(".cmd");
+  for (const ch of cmd) { c.textContent += ch; await sleep(ch === " " ? speed * 1.6 : speed); }
+  await sleep(250);
+  d.querySelector(".cursor").remove();
+}
+async function out(lines, gap = 110) { for (const l of lines) { line(l); await sleep(gap); } }
+
+function setStep(i) {
+  [...stepsEl.children].forEach((el, j) => { el.className = "step" + (j === i ? " on" : j < i ? " done" : ""); });
+}
+async function caption(n, text) {
+  const cap = document.getElementById("cap");
+  cap.style.opacity = 0; await sleep(250);
+  document.getElementById("capNum").textContent = String(n).padStart(2, "0");
+  cap.textContent = text; cap.style.opacity = 1;
+}
+function chip(kind) {
+  document.getElementById("chipsEmpty")?.remove();
+  const c = document.createElement("span");
+  c.className = "chip " + (kind === "routed" || kind === "notified" ? "k-notified" : kind.includes("resolved") ? "k-res" : "");
+  c.textContent = kind;
+  document.getElementById("chips").appendChild(c);
+}
+function bump(id, value) { const el = document.getElementById(id); el.textContent = value; el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump"); }
+function notify(text, resolved) {
+  document.getElementById("notifyEmpty")?.remove();
+  const box = document.getElementById("notify");
+  box.innerHTML = `<div class="notify${resolved ? " res" : ""}"><div class="from">POST /hook &middot; 200 OK</div>${esc(text)}</div>`;
+}
+
+async function run() {
+  // Cover with the pipeline drawing in.
+  await sleep(500);
+  const nodes = document.querySelectorAll("#flow .node");
+  for (const n of nodes) { n.classList.add("in"); await sleep(380); }
+  document.getElementById("coverTag").style.opacity = 1;
+  await sleep(2600);
+  document.getElementById("cover").classList.add("hide");
+  await sleep(600);
+
+  // 1. Validate
+  setStep(0); await caption(1, "Describe the team in sentinel.yaml and check it offline: no database needed.");
+  await type("sentinel-validate sentinel.yaml");
+  await out([
+    'workspace demo (production) from sentinel.yaml: <span class="hl-ok">OK</span>',
+    '  source  prometheus  alertmanager  POST http://localhost:8000/v1/ingest/demo/prometheus  <span class="hl-acc">[source token]</span>',
+    '  source  jobs        webhook       POST http://localhost:8000/v1/ingest/demo/jobs  <span class="hl-acc">[engine API key]</span>',
+    '  route   a critical incident -> notify [\'hook\'], approve -',
+    '  route   a medium incident   -> notify [\'hook\'], approve -',
+  ], 160);
+  await sleep(2600);
+
+  // 2. Start
+  setStep(1); await caption(2, "Start api + worker. Migrations run on start; the api fails fast if config is wrong.");
+  line("");
+  await type("docker compose up -d && curl -s localhost:8000/v1/readyz");
+  await out([
+    '<span class="dim"> Container ops-sentinel-api-1    Started</span>',
+    '<span class="dim"> Container ops-sentinel-api-1    </span><span class="hl-ok">Healthy</span>',
+    '<span class="dim"> Container ops-sentinel-worker-1 Started</span>',
+    'INFO sentinel.platform: workspace \'demo\': recorded a new spec version',
+    'INFO sentinel.main: <span class="hl-ok">platform ready: workspaces demo</span>',
+    '{"status":"<span class="hl-ok">ready</span>","workspaces":["demo"]}',
+  ], 260);
+  await sleep(2400);
+
+  // 3. Alert
+  clearTerm();
+  setStep(2); await caption(3, "Alertmanager fires. The signal is stored and a new incident opens in Exasol.");
+  await type('curl -X POST localhost:8000/v1/ingest/demo/prometheus -H "Authorization: Bearer $AM_INGEST_TOKEN" -d @firing.json', 16);
+  await sleep(300);
+  await out([
+    '<span class="hl-ok">202</span> {"accepted":1,"signals":[{"signal_id":"01M69GRTT6F2W903T5H1B60RW1",',
+    '      "incident_id":"01M69GRTX59ZPV3EB7ZN4K8CAY","new_incident":<span class="hl-warn">true</span>}]}',
+  ]);
+  document.getElementById("incEmpty").style.display = "none";
+  document.getElementById("inc").style.display = "block";
+  document.getElementById("incCard").querySelector(".inc-title").classList.add("bump");
+  chip("opened");
+  await sleep(3200);
+
+  // 4. Dedupe
+  setStep(3); await caption(4, "The same alert again joins the open incident instead of paging twice.");
+  line("");
+  await type("curl -X POST localhost:8000/v1/ingest/demo/prometheus ... -d @firing.json", 16);
+  await out([
+    '<span class="hl-ok">202</span> {"accepted":1,"signals":[{"signal_id":"01M69GRV3VVAQC570VJSVAXGF8",',
+    '      "incident_id":"01M69GRTX59ZPV3EB7ZN4K8CAY","new_incident":<span class="hl-ok">false</span>}]}',
+  ]);
+  bump("signals", "2"); chip("signal");
+  await sleep(3000);
+
+  // 5. Notify
+  setStep(4); await caption(5, "The worker claims the job from the Exasol queue, routes it and notifies on-call.");
+  line("");
+  await type("docker compose logs -f worker");
+  await out([
+    'INFO sentinel.worker: worker started: 4 slots on queues [\'default\']',
+    'INFO sentinel.worker: job 01M69GRV5JT180RK16EHG70T4F (incident.signal) done in 132 ms',
+    'INFO httpx: HTTP Request: POST http://host.docker.internal:8099/hook "<span class="hl-ok">200 OK</span>"',
+    'INFO sentinel.worker: job 01M69GRYT9RX38VBGM7C3GE2QB (incident.opened) done in 371 ms',
+  ], 450);
+  chip("routed"); await sleep(350); chip("notified");
+  notify("FinanceExportFailed: Nightly finance export failed", false);
+  await sleep(3200);
+
+  // 6. Resolve
+  clearTerm();
+  setStep(5); await caption(6, "The alert recovers. The incident closes itself and the message is updated.");
+  await type('curl -X POST localhost:8000/v1/ingest/demo/prometheus ... -d @resolved.json', 16);
+  await out([
+    '<span class="hl-ok">202</span> {"accepted":1,"signals":[{"signal_id":"01M69GRXDJ15XQFFMCE28NHV2N",',
+    '      "incident_id":"01M69GRTX59ZPV3EB7ZN4K8CAY","new_incident":false}]}',
+  ]);
+  bump("signals", "3"); chip("source_resolved");
+  await sleep(900);
+  const st = document.getElementById("status"); st.className = "pill resolved"; bump("status", "resolved");
+  chip("status.resolved");
+  notify("Resolved: FinanceExportFailed: Nightly finance export failed", true);
+  await sleep(700);
+  line("");
+  await type('curl -s -H "X-API-Key: $OPS_SENTINEL_API_KEY" localhost:8000/v1/workspaces/demo/incidents/01M69GRT...', 14);
+  await out([
+    '"status": "<span class="hl-ok">resolved</span>", "signal_count": 3,',
+    '"timeline": ["opened","signal","routed","notified","source_resolved","status.resolved"]',
+  ], 200);
+  await sleep(3200);
+
+  // 7. Guardrails
+  clearTerm();
+  setStep(6); await caption(7, "Fails closed: no token, the wrong credential, or no API key are all refused.");
+  await type("curl -X POST localhost:8000/v1/ingest/demo/prometheus -d @firing.json", 16);
+  line('<span class="hl-bad">401</span> {"detail":"invalid or missing token"}');
+  await sleep(500);
+  await type('curl -X POST ... -H "X-API-Key: $OPS_SENTINEL_API_KEY" -d @firing.json  # wrong credential', 14);
+  line('<span class="hl-bad">401</span> {"detail":"invalid or missing token"}');
+  await sleep(500);
+  await type("curl localhost:8000/v1/workspaces/demo/incidents", 16);
+  line('<span class="hl-bad">401</span> {"detail":"invalid or missing API key"}');
+  await sleep(2600);
+
+  // Closing
+  clearTerm();
+  setStep(7); await caption(8, "Every step is a row in Exasol, queryable with plain SQL.");
+  await type("exapump sql -p starter-kit", 22);
+  await sleep(200);
+  line('<span class="hl-acc">SQL&gt;</span> SELECT KIND, ACTOR FROM OPS_SENTINEL.INCIDENT_EVENTS', "out");
+  line('     WHERE INCIDENT_ID = \'01M69GRTX59ZPV3EB7ZN4K8CAY\' ORDER BY CREATED_AT;', "out");
+  await sleep(500);
+  await out([
+    '<span class="dim">KIND              ACTOR</span>',
+    'opened            source:prometheus',
+    'signal            source:prometheus',
+    'routed            system:router',
+    'notified          channel:hook',
+    'source_resolved   source:prometheus',
+    'status.resolved   source:prometheus',
+  ], 220);
+  await sleep(3800);
+
+  const cover = document.getElementById("cover");
+  cover.querySelector("p").textContent = "Alert in, incident tracked, on-call told, resolved — with a full audit trail in Exasol.";
+  document.getElementById("coverTag").textContent = "github.com/Shivathanu/ops-sentinel";
+  cover.classList.remove("hide");
+  await sleep(4200);
+  window.__done = true;
+}
+run();
+</script>
+</body>
+</html>
