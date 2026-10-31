@@ -44,10 +44,6 @@ class ModelGateway:
         self._factory = provider_factory
         self._cache: dict[str, ModelBinding] = {}
 
-    @property
-    def configured(self) -> bool:
-        return bool(self._roles)
-
     def resolve(self, role: str) -> ModelBinding:
         name = role if role in self._roles else next((r for r in ("smart", "fast") if r in self._roles), None)
         if name is None:

@@ -28,7 +28,6 @@ ACTOR = "agent:sentinel"
 class IncidentAnalyst:
     def __init__(self, spec: WorkspaceSpec, store: IncidentStore, gateway: ModelGateway, registry: ToolRegistry,
                  recorder: RunRecorder, *, business_context: str = "", secrets: frozenset[str] = frozenset()):
-        self._spec = spec
         self._store = store
         self._secrets = secrets
         toolsets = {t.toolset for t in registry.tools.values()}

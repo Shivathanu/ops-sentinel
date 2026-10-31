@@ -79,7 +79,3 @@ def run(ctx):
         probe_args="'probe', CURRENT_TIMESTAMP, 1.0",
     ),
 )
-
-
-def install_statements(schema: str) -> list[str]:
-    return [udf.statement(schema) for udf in UDFS]

@@ -1,12 +1,11 @@
-# Ops Sentinel v2: AI SRE platform design
+# Ops Sentinel: AI SRE platform design
 
-Status: accepted, phases 0 and 1 implemented · Date: 2026-10-31 · Supersedes the single-engine design in
-`docs/architecture.md` (the v1 `/api` endpoints keep working alongside).
+Status: phases 0 to 2 implemented · Date: 2026-10-31.
 
 **Exasol is the system of record.** Incidents, signals, the job queue, the audit log, agent runs, knowledge chunks,
 embeddings and memory all live in Exasol. Python 3 UDFs bring the intelligence to the data (fingerprinting, vector
 similarity, anomaly scores), so retrieval and analytics run in parallel inside the cluster instead of shipping rows
-out. See §4a.
+out. See §3a.
 
 ## 1. Goal
 
@@ -34,24 +33,7 @@ OTel audit) and Robusta (alert grouping into incidents, any-webhook sources, man
 needed, SaaS/VPC/self-host). This design borrows those ideas and adds a remediation path with an approval gate,
 plus edge runners, which neither emphasises.
 
-## 2. What changes from v1, and why
-
-| v1 | Problem | v2 |
-| --- | --- | --- |
-| One engine process doing watching, triage, Slack and remediation | Doesn't scale and can't be split | `api`, `worker`, `scheduler` services over a shared queue |
-| Exasol tables mixed with demo data, `SELECT MAX(ID)` after insert, manual DDL | Races under concurrency; no migrations; setup friction | A separate **platform schema** with versioned migrations applied on start, ULID keys, a transactional outbox, UDFs installed from tested code. Exasol is also a **toolset** the agent investigates |
-| One LLM call that returns JSON | No tool use, no follow-up questions | An agent loop with tool calling, subagents and budgets |
-| `SLACK_CHANNEL_ID`, one channel | No routing | **Channels** + **routes** per workspace, severity and tags |
-| Sources hard-coded in the TS CLI | Each new source needs code | **Source connectors** with payload presets, plus generic webhook, exec and MCP |
-| Fix = one command per source | Can't express risk, scope or auto-approval | **Action catalog** + **policy** |
-| `business-context.md` capped at 8000 characters | Doesn't scale; no retrieval | **Knowledge** pipeline (ingest → chunk → embed → retrieve) |
-| Single API key | Not multi-user | Orgs, workspaces, users, roles, and per-runner tokens |
-
-Kept from v1: the edge-runner security model (the engine never holds commands for client machines; it names an
-action id and the runner executes only what its local config defines), the guardrail SQL validator, the atomic
-approval claim, and the append-only audit trail.
-
-## 3. Core concepts
+## 2. Core concepts
 
 The vocabulary, from signal to resolution:
 
@@ -86,7 +68,7 @@ Source ──► Signal ──► (correlate) ──► Incident ──► Routi
 | **Channel** | Where humans are reached: Slack, Teams, email, PagerDuty, Opsgenie, generic webhook, web UI. Interactive channels can carry approvals. |
 | **Route** | Matches incidents (workspace, severity, labels, service) to channels for notify, approve and escalate. |
 
-## 4. Architecture
+## 3. Architecture
 
 ```
                          ┌───────────────────────────── control plane ─────────────────────────────┐
@@ -147,14 +129,14 @@ state. Workers send heartbeats to extend leases, expired leases are reaped, and 
 until they are moved to a dead-letter state. Every handler is idempotent. `JobQueue` is the only code that knows the
 queue is a table, so NATS or SQS can replace it later.
 
-## 4a. Exasol as the system of record
+## 3a. Exasol as the system of record
 
 ### Schemas and users
 
 | Schema | Holds | Written by |
 | --- | --- | --- |
 | `OPS_SENTINEL` (platform) | incidents, signals, timeline, jobs, audit, agent runs, knowledge, memory, proposals, runners | the engine, through `store/` only |
-| `SENTINEL` (v1 and demo data) | pipeline logs, query metrics, lineage, business tables | the teams' pipelines; read by the agent |
+| `SENTINEL` (pipeline and demo data) | pipeline logs, query metrics, lineage, business tables | the teams' pipelines; read by the agent |
 
 | User | Role | Privileges |
 | --- | --- | --- |
@@ -207,7 +189,7 @@ impact over `DATA_LINEAGE`, for triage).
 - **Vector search** is a full scan scored in parallel. That's fine up to millions of chunks per workspace. Beyond
   that, the `VectorStore` interface admits an external ANN index, with Exasol keeping the documents.
 
-## 5. The agent runtime (AI-native core)
+## 4. The agent runtime (AI-native core)
 
 ### 5.1 Agent loop
 
@@ -247,7 +229,7 @@ Default set:
 | `remediator` | Choose an action from the catalog, fill its parameters, state risk and verification | `actions` (catalog read), `knowledge` |
 | `scribe` | Write channel updates and the post-incident summary | `incident` |
 
-Teams can override any of these or add their own in YAML (see §8).
+Teams can override any of these or add their own in YAML (see §7).
 
 ### 5.3 Tools and toolsets
 
@@ -323,7 +305,7 @@ prompt caching where the provider supports it, and redaction of secrets and PII 
 The adapters (OpenAI-compatible, Anthropic, Ollama) are small. LiteLLM is an optional backend behind the same
 interface, not a hard dependency.
 
-## 6. Remediation and safety
+## 5. Remediation and safety
 
 ```
 ProposedAction ─► Policy engine ─► deny ────────────────────────────► recorded, explained
@@ -338,8 +320,8 @@ ProposedAction ─► Policy engine ─► deny ──────────�
 
 - **Action catalog** entries are declared by the team, never generated by the model. The model only picks an action
   id and fills parameters, which are validated against the action's JSON schema.
-- **SQL actions** keep the v1 guardrail (`guardrail.validate_fix_sql`) and the least-privilege executor user.
-- **Runner actions** keep the v1 property: the command exists only in the runner's local config, and the engine
+- **SQL actions** pass the SQL guardrail (`guardrail.validate_fix_sql`) and run as the least-privilege executor user.
+- **Runner actions** never leave the client: the command exists only in the runner's local config, and the engine
   sends `{action_id, params}`. The runner checks that the id exists locally and the params match its schema.
 - **Approval** is atomic (claim by `UPDATE ... WHERE status = 'awaiting_approval'`), bound to a role, and
   optionally requires two people for `risk: high`.
@@ -349,7 +331,7 @@ ProposedAction ─► Policy engine ─► deny ──────────�
 - **Prompt-injection posture**: tool outputs are wrapped as data, `write` tools cannot run from the loop, actions
   are allow-listed, and parameters are schema-validated.
 
-## 7. Multi-tenancy, identity and secrets
+## 6. Multi-tenancy, identity and secrets
 
 - **Hierarchy**: `organization → workspace (team) → environment (prod / staging)`. Every row carries
   `workspace_id`, enforced in the `store/` repositories (Exasol has no row-level security), with per-workspace views for BI access.
@@ -361,7 +343,7 @@ ProposedAction ─► Policy engine ─► deny ──────────�
 - **Secrets** are never stored in config. Config holds references (`${env:SLACK_BOT_TOKEN}`,
   `${k8s:secret/name#key}`, `${vault:path#key}`), resolved by a `SecretProvider`.
 
-## 8. Configuration: minimal to start, everything overridable
+## 7. Configuration: minimal to start, everything overridable
 
 **Layering:** built-in defaults → org config → workspace config (`sentinel.yaml` or the API/UI) → environment
 overrides. Every applied spec is versioned in Exasol (`CONFIG_VERSIONS`), editable through the API, and can be applied GitOps-style with
@@ -438,7 +420,7 @@ The CLI makes this discoverable: `sentinel connect slack`, `sentinel add source 
 `sentinel test channel oncall`, `sentinel simulate --source nightly-etl`, `sentinel routes explain <incident>`,
 `sentinel validate`. A published JSON Schema gives editor autocomplete.
 
-## 9. Data model (Exasol, platform schema)
+## 8. Data model (Exasol, platform schema)
 
 | Table | Key columns |
 | --- | --- |
@@ -460,7 +442,7 @@ The CLI makes this discoverable: `sentinel connect slack`, `sentinel add source 
 Incident states: `open → triaging → investigating → awaiting_approval → remediating → verifying → resolved`, plus
 side exits `suppressed`, `rejected`, `failed → escalated`.
 
-## 10. Extensibility contracts (Python)
+## 9. Extensibility contracts (Python)
 
 ```python
 class Source(Protocol):            # push (webhook) or pull (poll) → normalized Signals
@@ -496,7 +478,7 @@ class KnowledgeConnector(Protocol):
 Plugins register through Python entry points (`sentinel.sources`, `.toolsets`, `.channels`, `.actions`,
 `.models`, `.knowledge`), so a team ships its own plugin as a pip package without forking.
 
-## 11. Proposed code layout
+## 10. Proposed code layout
 
 ```
 engine/           Python project: pyproject.toml, Dockerfile, tests/, scripts/, dashboard/
@@ -519,21 +501,7 @@ deploy/           compose/ (quickstart, prod), helm/ops-sentinel/
 evals/            incident replay fixtures, scorers, `sentinel eval` harness
 ```
 
-### Where v1 modules go
-
-| v1 | v2 |
-| --- | --- |
-| `watcher.py` (Exasol polling) | `ingest/sources/exasol_pipeline.py` (a pull source) |
-| `mcp_client.py` | `tools/toolsets/exasol.py` (wraps the same MCP server) |
-| `triage_agent.py` | `agents/specs/triage.yaml` + `llm/providers/*` |
-| `slack_notifier.py` | `channels/slack.py` |
-| `remediation.py`, `guardrail.py` | `remediation/executors/sql.py`, `remediation/guardrail.py` |
-| `agent_events.py`, `agent_actions.py` | `api/routes/runners.py`, `remediation/executors/runner.py` |
-| `scoring.py` | `observability/metrics.py` (trust score from `action_executions` and feedback) |
-| `db.py` (Exasol pools) | reused by `store/exasol.py` for the platform schema; Exasol is also a toolset |
-| `dashboard/app.py` | kept until the `web` service lands |
-
-## 12. Deployment
+## 11. Deployment
 
 **Quickstart (laptop or single VM):**
 
@@ -555,7 +523,7 @@ sentinel simulate            # fires a demo incident end to end
 **Operational qualities:** idempotent jobs, retries with backoff, dead-letter queue, graceful shutdown that drains
 leases, per-workspace rate limits and LLM cost caps, data retention policies, and backups (Exasol backups of the platform schema).
 
-## 13. Quality: evals as a first-class feature
+## 12. Quality: evals as a first-class feature
 
 - `evals/` holds recorded incidents (signals plus frozen tool outputs) and expected outcomes (root cause keywords,
   chosen action, severity).
@@ -564,31 +532,31 @@ leases, per-workspace rate limits and LLM cost caps, data retention policies, an
 - Production feedback (helpful or not, corrected root cause) flows into memory and can be promoted to new eval
   cases.
 
-## 14. Delivery plan
+## 13. Delivery plan
 
 | Phase | Scope | Exit criteria |
 | --- | --- | --- |
 | **0. Foundations** ✅ | Exasol platform schema + migrations, UDFs, tenancy tables, job queue, config schema/loader with secret refs, domain models, audit, compose quickstart | `docker compose up` brings up api+worker on Exasol; `sentinel-validate` passes |
-| **1. Signal → incident → notify** ✅ (runner protocol v2 pending) | Ingest API, generic webhook + Alertmanager + Grafana + runner sources, correlation/dedup, channels (Slack, webhook), routes, auto-resolve on recovery; still to do: port the TS CLI to `/v1/ingest` and the scaffold to the v2 compose | An Alertmanager alert creates one incident and reaches the routed Slack channel |
+| **1. Signal → incident → notify** ✅ (CLI port pending) | Ingest API, generic webhook + Alertmanager + Grafana + runner sources, correlation/dedup, channels (Slack, webhook), routes, auto-resolve on recovery; still to do: port the TS CLI to `/v1/ingest` and its scaffold to the new compose file | An Alertmanager alert creates one incident and reaches the routed Slack channel |
 | **2. Agent runtime** | LLM gateway (OpenAI-compatible, Anthropic, Ollama), agent loop, tool registry, transformers, built-in toolsets (exasol, http, mcp, prometheus), triage + investigator + subagents, timeline events | The demo incident gets a root cause backed by tool evidence |
 | **3. Remediation** | Action catalog, policy engine, approvals with roles, SQL and runner executors, verification, memory write-back | An approved action runs, is verified and resolves the incident |
 | **4. Knowledge / RAG** | Knowledge connectors (file, git, URL), chunk/embed/hybrid retrieval, runbook matching, similar-incident memory, context manager budgets | Runbooks and past incidents measurably improve eval scores |
-| **5. Production hardening** | OIDC + RBAC, per-workspace views, Helm chart, rate and cost limits, web UI v1, eval harness in CI, MCP server endpoint | Helm install on a fresh cluster passes the smoke suite |
+| **5. Production hardening** | OIDC + RBAC, per-workspace views, Helm chart, rate and cost limits, a first web UI, eval harness in CI, MCP server endpoint | Helm install on a fresh cluster passes the smoke suite |
 | **6. Ecosystem** | Teams, email, PagerDuty and Opsgenie channels; Datadog, CloudWatch and GitHub sources; k8s, loki and github toolsets; plugin SDK docs | Third-party plugin installable via pip |
 
-Each phase ships working software. v1 endpoints (`/api/events`) stay behind a compatibility shim until phase 3 ends.
+Each phase ships working software.
 
-## 15. Decisions
+## 14. Decisions
 
 1. **Exasol is the system of record**, including the queue, the audit log and vectors, with Python UDFs for
-   in-database fingerprinting, similarity and anomaly scoring (§4a). Exasol is also a toolset the agent investigates.
+   in-database fingerprinting, similarity and anomaly scoring (§3a). Exasol is also a toolset the agent investigates.
 2. **The Python engine is the brain; the TS CLI becomes `init` / `up` / `apply` plus the edge `runner`**, keeping
    the edge security model.
 3. **Own thin LLM adapters, with LiteLLM optional**, rather than adopting an agent framework (LangGraph, CrewAI)
    wholesale, so budgets, policy checks and audit stay exact.
 4. **Exasol-backed job queue**, with NATS or SQS behind the `JobQueue` interface if volume ever demands it.
 
-## 16. Running it today
+## 15. Running it today
 
 ```
 python engine/scripts/bootstrap_sentinel_roles.py   # once, as a DBA: schema + 4 users, prints .env lines

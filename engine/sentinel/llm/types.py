@@ -6,7 +6,7 @@ ids), and translating history through a neutral format on every turn loses it. T
 speaks in turns, tool calls and tool results, and each adapter keeps its own transcript.
 """
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 
 @dataclass(frozen=True)
@@ -51,14 +51,14 @@ class Usage:
 
 
 # end: the model finished its turn. tool_use: it wants tool results. max_tokens: cut off. refusal: declined.
-STOP_REASONS = ("end", "tool_use", "max_tokens", "refusal")
+StopReason = Literal["end", "tool_use", "max_tokens", "refusal"]
 
 
 @dataclass(frozen=True)
 class AssistantTurn:
     text: str
     tool_calls: list[ToolCall]
-    stop_reason: str
+    stop_reason: StopReason
     usage: Usage
     model: str
     detail: str = ""  # e.g. the refusal category

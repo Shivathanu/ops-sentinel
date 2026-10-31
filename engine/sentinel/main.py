@@ -70,7 +70,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # garbage-collected mid-run.
     watcher = asyncio.create_task(watch_loop()) if settings.watcher_enabled else None
     if watcher is None:
-        logger.info("database watcher disabled (OPS_SENTINEL_WATCHER_ENABLED=false); serving agent incidents only")
+        logger.info("table watcher off (set OPS_SENTINEL_WATCHER_ENABLED=true to also poll the pipeline tables)")
     try:
         yield
     finally:

@@ -25,8 +25,6 @@ from sentinel.watcher import create_incident_row, store_slack_ts, update_inciden
 
 logger = logging.getLogger("sentinel.agent_events")
 
-OPEN_STATUSES = ("DETECTED", "AWAITING_APPROVAL", "APPROVED")
-
 
 class FailureEvent(BaseModel):
     source: str = Field(min_length=1, max_length=100)

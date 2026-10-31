@@ -64,8 +64,8 @@ class Settings(BaseSettings):
     # Comma-separated Slack user IDs (for example U012ABCDEF) allowed to approve or reject. Empty means nobody.
     slack_approver_ids: str = ""
 
-    # Set false to run the engine for agent-reported incidents only, with no polling of PIPELINE_LOGS/QUERY_METRICS.
-    watcher_enabled: bool = Field(default=True, validation_alias="OPS_SENTINEL_WATCHER_ENABLED")
+    # Opt-in: also poll SENTINEL.PIPELINE_LOGS / QUERY_METRICS directly. Incidents normally arrive through ingest.
+    watcher_enabled: bool = Field(default=False, validation_alias="OPS_SENTINEL_WATCHER_ENABLED")
 
     # Platform (v2). Platform tables live in their own schema so the v1 SENTINEL schema, which also holds the demo
     # business tables, is never touched by migrations.
@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     # Path to the workspace spec (sentinel.yaml). Empty means no spec: v1 behaviour only.
     spec_file: str = Field(default="", validation_alias="OPS_SENTINEL_SPEC_FILE")
     # Apply pending platform migrations and reinstall UDFs when the api starts. Safe with several replicas; turn off
-    # where migrations run as a separate step (the Helm pre-upgrade Job).
+    # where migrations run as a separate step (a Kubernetes Job).
     auto_migrate: bool = Field(default=True, validation_alias="OPS_SENTINEL_AUTO_MIGRATE")
     worker_poll_seconds: float = Field(default=2.0, validation_alias="OPS_SENTINEL_WORKER_POLL_SECONDS")
     worker_lease_seconds: int = Field(default=300, validation_alias="OPS_SENTINEL_WORKER_LEASE_SECONDS")

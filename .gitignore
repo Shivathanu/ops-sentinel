@@ -32,3 +32,9 @@ cli/node_modules/
 cli/dist/
 cli/examples/.healed
 .sentinel/
+
+# local workspace from the run guide, and tool-generated skill links into .venv
+my-sentinel/
+.agents/
+.claude/skills/developing-with-streamlit
+.claude/settings.local.json

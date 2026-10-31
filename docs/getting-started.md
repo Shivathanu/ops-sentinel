@@ -1,12 +1,14 @@
-# Getting started
+# Run guide
 
-This guide takes a team from nothing to "an alert reaches the right channel, and its whole history is in Exasol"
-in about 15 minutes. It was verified end to end on Windows with Docker Desktop and the Exasol starter kit.
+This guide takes a team from nothing to "an alert reaches the right channel, the AI SRE has analysed it, and its
+whole history is in Exasol" in about 15 minutes. Steps 0 to 6 were verified end to end on Windows with Docker
+Desktop and the Exasol starter kit. For production, see [deployment.md](deployment.md).
 
 ```
 alerting tool ──POST──► /v1/ingest/{workspace}/{source} ──► Exasol (signal, incident, job)
                                                                │
                                      worker claims the job ◄───┘──► routes ──► Slack / webhook / ...
+                                                               └──► AI SRE: triage ─► investigation ─► analysis
 ```
 
 ## 0. Prerequisites
@@ -17,8 +19,9 @@ alerting tool ──POST──► /v1/ingest/{workspace}/{source} ──► Exas
 | An Exasol database | Local: the [Exasol starter kit](https://github.com/exasol) (`exakit start`, `exakit status` says `running`). Or any Exasol you can reach |
 | Python 3.10+ (for the one-time bootstrap and `sentinel-validate`) | `python --version` |
 | Optional: a Slack bot token with `chat:write` and the channel id | |
+| Optional, for AI analysis: an Anthropic or OpenAI API key, or a local model in [Ollama](https://ollama.com) | `ollama list` |
 
-Install the engine tools once: `pip install ops-sentinel` (from this repository: `pip install -e engine`).
+Install the engine tools once, from the repository root: `pip install -e engine`.
 
 ## 1. Create a project folder
 
@@ -78,6 +81,32 @@ sentinel-validate my-sentinel/sentinel.yaml
 It reads the `.env` next to the spec, needs no database, and prints each source's ingest URL and where a critical
 and a medium incident would be routed. Fix anything it reports before starting.
 
+### 3b. Turn on the AI SRE (optional)
+
+Add model roles and the read-only Exasol toolset to `sentinel.yaml`:
+
+```yaml
+models:
+  smart: { provider: anthropic, model: claude-opus-5-5, api_key: "${env:ANTHROPIC_API_KEY}" }
+  fast:  { provider: anthropic, model: claude-haiku-5-5, api_key: "${env:ANTHROPIC_API_KEY}" }
+  # Fully local instead:  smart: { provider: ollama, model: llama3.1:8b, base_url: http://host.docker.internal:11434/v1 }
+toolsets:
+  exasol: { schemas: [SENTINEL] }        # schemas the agents may read
+actions:                                 # pre-approved fixes the investigator may suggest
+  - { id: rerun-finance-export, description: "Re-run the finance export", runner: etl-box, risk: low }
+```
+
+and to `.env`:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+EXA_USER=mcp_readonly                    # the read-only investigation login from step 2
+EXA_PASSWORD=...
+```
+
+Without `models`, everything else works and analysis is skipped. A local model needs a GPU to be practical: on a
+CPU, one 8B-model turn can take minutes.
+
 ## 4. Start the engine
 
 ```
@@ -118,13 +147,34 @@ What you should observe:
 3. **Alert resolved** → incident `resolved`, messages updated to "Resolved: ...".
 4. The timeline shows every step with its actor: `opened`, `routed`, `notified`, `signal`, `source_resolved`,
    `status.resolved`. All of it is in `OPS_SENTINEL.INCIDENT_EVENTS`, queryable with SQL.
+5. **With models configured (3b):** the incident moves `open → triaging → investigating → open`, the timeline gains
+   `agent.started`, `agent.tool` (each SQL query and lookup) and `analysis`, and the channel messages are updated
+   with impact, root cause, evidence and a suggested pre-approved action. Cost and tokens per run are in
+   `OPS_SENTINEL.AGENT_RUNS`.
+
+Useful SQL while it runs:
+
+```sql
+SELECT AGENT_NAME, STATUS, MODEL, INPUT_TOKENS, OUTPUT_TOKENS, COST_USD FROM OPS_SENTINEL.AGENT_RUNS ORDER BY STARTED_AT DESC;
+SELECT STEP_NO, KIND, TOOL_NAME, RESULT_SUMMARY FROM OPS_SENTINEL.AGENT_STEPS WHERE RUN_ID = '<run id>' ORDER BY STEP_NO;
+```
+
+## Stop and reset
+
+```
+docker compose down                       # stop api and worker; data stays in Exasol
+python engine/scripts/bootstrap_sentinel_roles.py --reset-passwords --env-file my-sentinel/.env   # rotate users
+```
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `Bind for 127.0.0.1:8000 failed: port is already allocated` | Another engine (for example a v1 project) uses 8000. Change the host port in `compose.yaml`, e.g. `127.0.0.1:8100:8000` |
+| `Bind for 127.0.0.1:8000 failed: port is already allocated` | Another service already uses port 8000. Change the host port in `compose.yaml`, e.g. `127.0.0.1:8100:8000` |
 | `insufficient privileges for creating schema` | Run step 2; the platform schema must exist and belong to `sentinel_owner` |
 | api exits with `invalid workspace configuration` | Run `sentinel-validate`; it names the source, channel or secret at fault |
 | `401 invalid or missing token` on ingest | A source with `token:` accepts only that token, not the API key |
 | Worker `unhealthy` | It cannot reach Exasol; `docker compose logs worker` |
+| api exits with `environment variable ANTHROPIC_API_KEY is not set` | The spec names a model key that `.env` lacks: add it, or remove `models` to run without AI analysis |
+| Timeline shows `agent.finished` with `budget_exhausted` | The model was too slow or the task too big for the agent's budget; raise `budget` for that agent in the spec, or use a faster model |
+| Analysis says it could not query Exasol | Set `EXA_USER` / `EXA_PASSWORD` to the read-only login, and list the schemas under `toolsets.exasol.schemas` |

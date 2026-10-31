@@ -1,1 +1,0 @@
-Finance close depends on the sales pipeline. A failed sales_clean transform leaves the Finance Executive BI dashboard stale. Do not drop or rewrite historical sales rows; fill missing region codes with UNKNOWN only.
