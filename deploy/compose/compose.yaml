@@ -39,6 +39,12 @@ services:
   worker:
     <<: *engine
     command: ["sentinel-worker"]
+    healthcheck:
+      test: ["CMD", "sentinel-worker", "--check"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     depends_on:
       api:
         condition: service_healthy   # the api applies migrations before any worker claims a job

@@ -11,10 +11,12 @@ import os
 import signal
 import socket
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from pathlib import Path
 
 from ops_sentinel.config import settings
 from ops_sentinel.store.queue import Job, JobQueue
@@ -23,6 +25,7 @@ from ops_sentinel.workers.handlers import Handler, Handlers, PermanentJobError
 logger = logging.getLogger("ops_sentinel.worker")
 
 REAP_EVERY_SECONDS = 30.0
+HEARTBEAT_FILE = Path(tempfile.gettempdir()) / "sentinel-worker.alive"
 
 
 class Worker:
@@ -36,6 +39,7 @@ class Worker:
         poll_seconds: float = 2.0,
         lease_seconds: int = 300,
         worker_id: str | None = None,
+        heartbeat_file: Path | None = None,
     ):
         self._queue = queue
         self._handlers = dict(handlers)
@@ -45,6 +49,7 @@ class Worker:
         self._lease = lease_seconds
         self.worker_id = worker_id or f"{socket.gethostname()}:{os.getpid()}"
         self.stopping = threading.Event()
+        self.heartbeat_file = heartbeat_file
 
     def run_once(self, slot: int = 0) -> bool:
         """Claims and processes at most one job. Returns True if a job was processed."""
@@ -94,11 +99,22 @@ class Worker:
         while not self.stopping.is_set():
             try:
                 worked = self.run_once(slot)
+                self._mark_alive()
             except Exception:  # noqa: BLE001 - the database may be briefly unavailable; keep the thread alive
                 logger.exception("worker slot %d could not claim a job", slot)
                 worked = False
             if not worked:
                 self.stopping.wait(self._poll)
+
+    def _mark_alive(self) -> None:
+        """Touches the heartbeat file after every successful trip to the queue. A container healthcheck compares
+        its age (`sentinel-worker --check`), so a worker that cannot reach Exasol turns unhealthy."""
+        if self.heartbeat_file is None:
+            return
+        try:
+            self.heartbeat_file.touch()
+        except OSError:
+            logger.warning("cannot write the heartbeat file %s", self.heartbeat_file, exc_info=True)
 
     def _reaper(self) -> None:
         while not self.stopping.wait(REAP_EVERY_SECONDS):
@@ -123,7 +139,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sentinel-worker", description="Process Ops Sentinel jobs.")
     parser.add_argument("--concurrency", type=int, default=int(os.environ.get("OPS_SENTINEL_WORKER_CONCURRENCY", "4")))
     parser.add_argument("--queue", action="append", dest="queues", help="queue to serve; repeat for several")
+    parser.add_argument("--check", action="store_true",
+                        help="healthcheck: exit 0 if a running worker reached the queue recently, else 1")
     args = parser.parse_args(argv)
+    if args.check:
+        try:
+            age = time.time() - HEARTBEAT_FILE.stat().st_mtime
+        except OSError:
+            return 1
+        return 0 if age < max(60.0, settings.worker_poll_seconds * 10) else 1
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     from ops_sentinel.platform import get_platform
@@ -145,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         concurrency=max(1, args.concurrency),
         poll_seconds=settings.worker_poll_seconds,
         lease_seconds=settings.worker_lease_seconds,
+        heartbeat_file=HEARTBEAT_FILE,
     )
 
     def stop(signum: int, _frame: object) -> None:

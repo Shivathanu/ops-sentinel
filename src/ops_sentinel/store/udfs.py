@@ -19,6 +19,7 @@ class UdfDefinition:
     library: Path
     adapter: str
     description: str
+    probe_args: str  # arguments for one test call, to confirm the database can run the UDF
 
     def statement(self, schema: str) -> str:
         body = self.library.read_text(encoding="utf-8").rstrip() + "\n\n" + self.adapter.strip() + "\n"
@@ -42,6 +43,7 @@ def run(ctx):
     return fingerprint(ctx.input_text)
 """,
         description="Normalized error fingerprint; correlates historic PIPELINE_LOGS errors in bulk.",
+        probe_args="'probe'",
     ),
     UdfDefinition(
         name="VECTOR_COSINE",
@@ -54,6 +56,7 @@ def run(ctx):
     return cosine(ctx.query_embedding, ctx.candidate_embedding)
 """,
         description="Cosine similarity of two base64 float32 embeddings; powers knowledge and memory retrieval.",
+        probe_args="CAST(NULL AS VARCHAR(10)), CAST(NULL AS VARCHAR(10))",
     ),
     UdfDefinition(
         name="ROBUST_ZSCORE",
@@ -73,6 +76,7 @@ def run(ctx):
         ctx.emit(key, observed_at, value, score)
 """,
         description="Median/MAD anomaly score per series (GROUP BY the series); flags duration and cost outliers.",
+        probe_args="'probe', CURRENT_TIMESTAMP, 1.0",
     ),
 )
 

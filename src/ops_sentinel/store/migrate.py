@@ -128,7 +128,11 @@ def migrate(
     With `runtime_user` (a separate schema owner runs migrations), the runtime user's grants are reconciled too."""
     migrations = discover() if migrations is None else migrations
     with connect() as conn:
-        conn.execute("CREATE SCHEMA IF NOT EXISTS {schema!q}", {"schema": schema})
+        # Exasol checks the CREATE SCHEMA privilege even with IF NOT EXISTS, and a schema owner created by the
+        # bootstrap script does not hold it, so only create the schema when it is really missing.
+        exists = conn.execute("SELECT COUNT(*) FROM EXA_SCHEMAS WHERE SCHEMA_NAME = {schema}", {"schema": schema}).fetchone()
+        if not (exists and exists[0]):
+            conn.execute("CREATE SCHEMA {schema!q}", {"schema": schema})
         conn.execute("OPEN SCHEMA {schema!q}", {"schema": schema})
         conn.execute(BOOKKEEPING)
         applied = applied_versions(conn)
@@ -172,24 +176,57 @@ def migrate(
             logger.info("applied migration %s_%s", migration.version, migration.name)
             done.append(migration.version)
 
-    if install_udfs:
-        with connect() as conn:
-            for statement in udfs.install_statements(schema):
-                conn.execute(statement)
-        logger.info("installed %d UDF scripts in %s", len(udfs.UDFS), schema)
+    installed = install_udfs_if_supported(connect, schema) if install_udfs else []
     if runtime_user:
         with connect() as conn:
-            for statement in runtime_grants(schema, runtime_user, migrations):
+            for statement in runtime_grants(schema, runtime_user, migrations, installed):
                 conn.execute(statement)
         logger.info("granted runtime privileges in %s to %s", schema, runtime_user)
     return done
+
+
+def is_missing_language(exc: BaseException) -> bool:
+    return "script language" in str(exc).lower()
+
+
+def install_udfs_if_supported(connect: Callable[[], AbstractContextManager[Connection]], schema: str) -> list[str]:
+    """Installs every UDF the database can run and returns their names.
+
+    UDFs accelerate work by running it next to the data, but nothing depends on them: the engine runs the same
+    udf_lib code itself. A database without a Python 3 script language container (some single-node and personal
+    editions) therefore still gets a working platform, with a warning that says how to enable the UDFs. Any other
+    error is a real bug in a UDF and stops the migration.
+    """
+    installed: list[str] = []
+    with connect() as conn:
+        for udf in udfs.UDFS:
+            try:
+                conn.execute(udf.statement(schema))
+                # Creating succeeds without a container; only running reveals it, so probe each UDF once.
+                conn.execute(f'SELECT "{schema}"."{udf.name}"({udf.probe_args}) FROM DUAL')
+            except Exception as exc:
+                if not is_missing_language(exc):
+                    raise
+                conn.execute(f'DROP SCRIPT IF EXISTS "{schema}"."{udf.name}"')
+                logger.warning(
+                    "UDFs disabled: this Exasol has no Python 3 script language container, so %s and the other UDFs "
+                    "run inside the engine instead. Install a script language container to move them into the "
+                    "database: https://docs.exasol.com/db/latest/database_concepts/udf_scripts/adding_new_packages_script_languages.htm",
+                    udf.name,
+                )
+                return []
+            installed.append(udf.name)
+    logger.info("installed UDFs in %s: %s", schema, ", ".join(installed))
+    return installed
 
 
 TABLE_NAME = re.compile(r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([A-Z_][A-Z0-9_]*)", re.IGNORECASE)
 APPEND_ONLY = frozenset({"AUDIT_EVENTS"})
 
 
-def runtime_grants(schema: str, user: str, migrations: list[Migration]) -> list[str]:
+def runtime_grants(
+    schema: str, user: str, migrations: list[Migration], installed_udfs: list[str] | None = None
+) -> list[str]:
     """Least privilege for the runtime user, reconciled on every run (GRANT is idempotent in Exasol): DML on platform
     tables, only SELECT and INSERT on the audit log so history cannot be rewritten, nothing on SCHEMA_MIGRATIONS
     beyond reading it, and EXECUTE on the UDFs. The runtime user can never create, alter or drop anything."""
@@ -200,7 +237,8 @@ def runtime_grants(schema: str, user: str, migrations: list[Migration]) -> list[
     for table in tables:
         privileges = "SELECT, INSERT" if table in APPEND_ONLY else "SELECT, INSERT, UPDATE, DELETE"
         statements.append(f'GRANT {privileges} ON "{schema}"."{table}" TO {user}')
-    statements += [f'GRANT EXECUTE ON "{schema}"."{udf.name}" TO {user}' for udf in udfs.UDFS]
+    names = [udf.name for udf in udfs.UDFS] if installed_udfs is None else installed_udfs
+    statements += [f'GRANT EXECUTE ON "{schema}"."{name}" TO {user}' for name in names]
     return statements
 
 
@@ -254,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - a CLI reports and exits non-zero
         logger.error("migration failed: %s", exc)
         return 1
-    print(f"schema {args.schema}: {len(done)} migration(s) applied, UDFs installed")
+    print(f"schema {args.schema}: {len(done)} migration(s) applied, up to date (UDF status is logged above)")
     return 0
 
 

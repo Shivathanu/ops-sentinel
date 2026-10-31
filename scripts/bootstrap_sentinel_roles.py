@@ -1,8 +1,11 @@
 """One-time database setup, run once by a DBA. Creates the platform schema and the four Ops Sentinel users with
 generated passwords, grants each the least it needs, and prints the .env lines to paste.
 
-    EXASOL_DBA_USER=sys EXASOL_DBA_PASSWORD=... python scripts/bootstrap_sentinel_roles.py
-    python scripts/bootstrap_sentinel_roles.py --reset-passwords     rotate the passwords of existing users
+    python scripts/bootstrap_sentinel_roles.py --env-file my-sentinel/.env   credentials go straight into .env
+    python scripts/bootstrap_sentinel_roles.py --reset-passwords             rotate the passwords of existing users
+
+The DBA login comes from EXASOL_DBA_USER / EXASOL_DBA_PASSWORD, or, when those are unset, from the local Exasol
+starter kit's stored sys password.
 
 Users (see docs/design/ai-sre-platform.md, "Exasol as the system of record"):
     sentinel_owner     owns the platform schema; runs migrations and installs UDFs     EXASOL_MIGRATOR_*
@@ -17,6 +20,7 @@ import argparse
 import os
 import secrets
 import sys
+from pathlib import Path
 
 import pyexasol
 from dotenv import load_dotenv
@@ -35,23 +39,60 @@ def password() -> str:
     return "".join(secrets.choice(alphabet) for _ in range(28))
 
 
+STARTER_KIT_SYS_PASSWORD = Path.home() / ".exasol-starter-kit" / "credentials" / "nano_sys_password"
+
+
+def dba_credentials() -> tuple[str | None, str]:
+    """EXASOL_DBA_USER/PASSWORD when set; otherwise the local Exasol starter kit's sys login, if it is installed."""
+    user = os.environ.get("EXASOL_DBA_USER")
+    if user:
+        return user, os.environ.get("EXASOL_DBA_PASSWORD", "")
+    if STARTER_KIT_SYS_PASSWORD.is_file():
+        os.environ.setdefault("EXASOL_VALIDATE_CERTIFICATE", "false")  # the starter kit uses a self-signed certificate
+        print("using the Exasol starter kit's sys login")
+        return "sys", STARTER_KIT_SYS_PASSWORD.read_text(encoding="utf-8").strip()
+    return None, ""
+
+
+def write_env(path: Path, values: dict[str, str]) -> None:
+    """Sets keys in a .env file, replacing existing lines for them and appending the rest; other lines are kept."""
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    remaining = dict(values)
+    for index, line in enumerate(lines):
+        key = line.split("=", 1)[0].strip()
+        if key in remaining:
+            lines[index] = f"{key}={remaining.pop(key)}"
+    if remaining:
+        lines += ["", "# Written by scripts/bootstrap_sentinel_roles.py"] + [f"{k}={v}" for k, v in remaining.items()]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--reset-passwords", action="store_true", help="also rotate passwords of users that exist")
     parser.add_argument("--platform-schema", default=os.environ.get("OPS_SENTINEL_PLATFORM_SCHEMA", "OPS_SENTINEL"))
     parser.add_argument("--data-schema", default=os.environ.get("EXASOL_SCHEMA", "SENTINEL"),
                         help="v1 schema with the pipeline tables the engine reads")
+    parser.add_argument("--env-file", type=Path,
+                        help="write issued credentials into this .env (created or updated) instead of printing them")
     args = parser.parse_args()
-    load_dotenv()
+    load_dotenv(args.env_file if args.env_file and args.env_file.exists() else None)
 
-    dba_user = os.environ.get("EXASOL_DBA_USER")
+    dba_user, dba_password = dba_credentials()
     if not dba_user:
-        print("Set EXASOL_DBA_USER and EXASOL_DBA_PASSWORD (a DBA such as sys). They are used for this run only.")
+        print("Set EXASOL_DBA_USER and EXASOL_DBA_PASSWORD (a DBA such as sys), or install the Exasol starter kit.")
         return 2
+    host = os.environ.get("EXASOL_ADMIN_HOST", "127.0.0.1")
+    if host == "host.docker.internal":
+        host = "127.0.0.1"  # the project .env addresses Exasol from inside containers; this script runs on the host
     conn = pyexasol.connect(
-        dsn=f"{os.environ.get('EXASOL_ADMIN_HOST', '127.0.0.1')}:{os.environ.get('EXASOL_ADMIN_PORT', '8563')}",
+        dsn=f"{host}:{os.environ.get('EXASOL_ADMIN_PORT', '8563')}",
         user=dba_user,
-        password=os.environ.get("EXASOL_DBA_PASSWORD", ""),
+        password=dba_password,
         websocket_sslopt={"cert_reqs": 0} if os.environ.get("EXASOL_VALIDATE_CERTIFICATE", "true").lower() == "false" else None,
     )
     schema = args.platform_schema.upper()
@@ -90,12 +131,21 @@ def main() -> int:
 
     print(f"\nPlatform schema {schema} is owned by sentinel_owner. The engine creates its tables on first start.")
     print("Grant sentinel_executor DML on each business table it may repair, and only those (see sql/roles.sql).")
-    if issued:
+    values: dict[str, str] = {}
+    for user, secret in issued.items():
+        values[f"{USERS[user]}_USER"] = user
+        values[f"{USERS[user]}_PASSWORD"] = secret
+    if values and args.env_file:
+        write_env(args.env_file, values)
+        print(f"\nwrote credentials for {', '.join(issued)} to {args.env_file}")
+    elif values:
         print("\nAdd to .env (shown once):")
-        for user, secret in issued.items():
-            prefix = USERS[user]
-            print(f"{prefix}_USER={user}")
-            print(f"{prefix}_PASSWORD={secret}")
+        for key, value in values.items():
+            print(f"{key}={value}")
+    kept = [user for user in USERS if user not in issued]
+    if kept:
+        print(f"existing users kept with their current passwords: {', '.join(kept)} "
+              "(use --reset-passwords to issue new ones)")
     return 0
 
 

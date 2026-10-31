@@ -43,21 +43,44 @@ def test_bundled_migrations_are_ordered_and_parse() -> None:
 def test_migrate_applies_pending_versions_once_each_and_installs_udfs() -> None:
     conn = FakeConnection()
     applied_list = FakeStatement(rows=[("0001", migrate.discover()[0].checksum)])
-    conn.script(FakeStatement(), FakeStatement(), FakeStatement(), applied_list)
+    schema_exists = FakeStatement(rows=[(1,)])
+    conn.script(schema_exists, FakeStatement(), FakeStatement(), applied_list)
     migrations = migrate.discover()[:2]
 
     done = migrate.migrate(factory(conn), "OPS_SENTINEL", migrations)
 
     assert done == ["0002"]
-    assert conn.statements("INSERT INTO SCHEMA_MIGRATIONS")
+    assert not conn.statements("CREATE SCHEMA")  # needs a privilege the schema owner lacks; skipped when it exists
     assert conn.params_of("INSERT INTO SCHEMA_MIGRATIONS")["version"] == "0002"
     assert len(conn.statements("CREATE OR REPLACE PYTHON3")) == len(udfs.UDFS)
     assert conn.commits == 1
 
 
+def test_without_a_python_container_udfs_are_skipped_and_not_granted() -> None:
+    class NoContainer(Exception):
+        pass
+
+    conn = FakeConnection().script(
+        FakeStatement(),  # CREATE OR REPLACE ... FINGERPRINT succeeds
+        NoContainer("No usable script language container is installed for the requested language."),
+    )
+
+    assert migrate.install_udfs_if_supported(factory(conn), "OPS_SENTINEL") == []
+    assert conn.statements('DROP SCRIPT IF EXISTS "OPS_SENTINEL"."FINGERPRINT"')
+    grants = migrate.runtime_grants("OPS_SENTINEL", "sentinel_engine", migrate.discover(), [])
+    assert not any("EXECUTE" in g for g in grants)
+
+
+def test_a_broken_udf_still_fails_the_migration() -> None:
+    conn = FakeConnection().script(FakeStatement(), RuntimeError("syntax error in script"))
+
+    with pytest.raises(RuntimeError, match="syntax error"):
+        migrate.install_udfs_if_supported(factory(conn), "OPS_SENTINEL")
+
+
 def test_an_edited_applied_migration_is_refused() -> None:
     conn = FakeConnection()
-    conn.script(FakeStatement(), FakeStatement(), FakeStatement(), FakeStatement(rows=[("0001", "0" * 64)]))
+    conn.script(FakeStatement(rows=[(1,)]), FakeStatement(), FakeStatement(), FakeStatement(rows=[("0001", "0" * 64)]))
 
     with pytest.raises(migrate.MigrationError, match="edited after it was applied"):
         migrate.migrate(factory(conn), "OPS_SENTINEL", migrate.discover()[:1])

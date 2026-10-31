@@ -4,6 +4,9 @@ Exit code 0 means the api and worker will accept the spec. Useful in CI on the r
 """
 import argparse
 import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from ops_sentinel.channels.router import plan_routes
 from ops_sentinel.config import settings
@@ -17,6 +20,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="a spec file or a directory of specs (default: OPS_SENTINEL_SPEC_FILE or sentinel.yaml)")
     parser.add_argument("--base-url", default="http://localhost:8000", help="engine URL used in the printed ingest URLs")
     args = parser.parse_args(argv)
+
+    # The project's .env normally sits next to the spec (docker compose reads it from there too). Variables already
+    # set in the environment win.
+    spec_dir = Path(args.path) if Path(args.path).is_dir() else Path(args.path).parent
+    if (spec_dir / ".env").is_file():
+        load_dotenv(spec_dir / ".env", override=False)
 
     from ops_sentinel.platform import build_platform
 
