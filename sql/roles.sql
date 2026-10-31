@@ -1,5 +1,5 @@
 -- Ops Sentinel database roles. Review, set real passwords, then run as a DBA user (never as the app itself):
---   exapump sql -p starter-kit -f sql/roles.sql
+--   exapump sql -p starter-kit < sql/roles.sql
 --
 -- Three identities, three privilege sets, so no single credential can both approve and rewrite history:
 --   mcp_readonly      investigation over MCP: SELECT only

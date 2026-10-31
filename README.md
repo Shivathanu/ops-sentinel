@@ -62,7 +62,7 @@ python engine/scripts/dry_run.py
 Then run it for real:
 
 ```bash
-exapump sql -p starter-kit -f sql/schema.sql      # create the SENTINEL schema
+exapump sql -p starter-kit < sql/schema.sql      # create the SENTINEL schema
 python engine/scripts/seed_data.py                # load synthetic data only
 python -m uvicorn sentinel.main:app --port 8000
 streamlit run engine/dashboard/app.py             # in a second terminal
